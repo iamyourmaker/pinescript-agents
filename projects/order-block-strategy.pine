@@ -1,0 +1,704 @@
+//@version=6
+strategy("Order Block Trading Strategy",
+     shorttitle="OB Strategy",
+     overlay=true,
+     default_qty_type=strategy.percent_of_equity,
+     default_qty_value=10,
+     commission_type=strategy.commission.percent,
+     commission_value=0.1,
+     slippage=2,
+     process_orders_on_close=false,
+     calc_on_every_tick=false,
+     max_bars_back=500)
+
+// ============================================================================
+// PROJECT INFO
+// ============================================================================
+// Order Block Trading Strategy
+// Based on institutional order flow analysis
+// Features: OB detection, market structure, Fibonacci entries, MTF confirmation
+// Risk Management: Dynamic SL/TP, daily limits, position sizing
+// ============================================================================
+
+// ============================================================================
+// INPUTS - ORDER BLOCK GROUP
+// ============================================================================
+obLength = input.int(5, "Order Block Length",
+     minval=1, maxval=50,
+     tooltip="Number of bars to analyze for Order Block formation",
+     group="📦 Order Block Settings")
+
+obZoneCounts = input.string("Medium", "Zone Counts",
+     options=["High", "Medium", "Low", "One"],
+     tooltip="Number of OB zones to track: High=10, Medium=5, Low=3, One=1",
+     group="📦 Order Block Settings")
+
+swingHighBars = input.int(5, "Swing High Lookback",
+     minval=1,
+     tooltip="Bars to left/right for swing high detection",
+     group="📦 Order Block Settings")
+
+swingLowBars = input.int(5, "Swing Low Lookback",
+     minval=1,
+     tooltip="Bars to left/right for swing low detection",
+     group="📦 Order Block Settings")
+
+showOBBoxes = input.bool(true, "Show OB Boxes",
+     tooltip="Display Order Block zones as boxes on chart",
+     group="📦 Order Block Settings")
+
+obBoxExtend = input.int(20, "Extend OB Boxes",
+     minval=0, maxval=500,
+     tooltip="Number of bars to extend OB boxes to the right",
+     group="📦 Order Block Settings")
+
+// ============================================================================
+// INPUTS - FILTER GROUP
+// ============================================================================
+useMTFConfirmation = input.bool(true, "MTF Confirmation",
+     tooltip="Use multi-timeframe analysis for trend and structure",
+     group="🔍 Filters")
+
+trendTF = input.timeframe("30", "Trend Direction Timeframe",
+     tooltip="Timeframe for trend direction confirmation",
+     group="🔍 Filters")
+
+structureTF = input.timeframe("120", "Major Structure Timeframe",
+     tooltip="Timeframe for major market structure (2hr default)",
+     group="🔍 Filters")
+
+useEMARetracement = input.bool(true, "EMA for Retracement",
+     tooltip="Use EMA crossover as entry confirmation",
+     group="🔍 Filters")
+
+fastEMALength = input.int(5, "Fast EMA",
+     minval=1, maxval=50,
+     tooltip="Fast EMA for retracement confirmation",
+     group="🔍 Filters")
+
+midEMALength = input.int(13, "Mid EMA",
+     minval=1, maxval=100,
+     tooltip="Mid EMA for retracement confirmation",
+     group="🔍 Filters")
+
+useMTFRSI = input.bool(false, "MTF Momentum Filter (RSI)",
+     tooltip="Use RSI from higher timeframe as momentum filter",
+     group="🔍 Filters")
+
+rsiTF = input.timeframe("30", "RSI Timeframe",
+     tooltip="Timeframe for RSI momentum analysis",
+     group="🔍 Filters")
+
+rsiLength = input.int(14, "RSI Length",
+     minval=1, maxval=200,
+     tooltip="RSI calculation period",
+     group="🔍 Filters")
+
+useMTFEngulfing = input.bool(true, "MTF Confirmation Candle on Entry",
+     tooltip="Check for engulfing candle on lower timeframe at entry",
+     group="🔍 Filters")
+
+engulfingTF = input.timeframe("1", "Engulfing Timeframe",
+     tooltip="Lower timeframe to check for engulfing patterns",
+     group="🔍 Filters")
+
+useLiquidityPool = input.bool(false, "Liquidity Pool Detection",
+     tooltip="Identify and factor in liquidity pools",
+     group="🔍 Filters")
+
+// ============================================================================
+// INPUTS - RISK MANAGEMENT GROUP
+// ============================================================================
+stopLossType = input.string("OB-SL", "Stop Loss Logic",
+     options=["OB-SL", "FIB-SL", "Dynamic"],
+     tooltip="OB-SL: Below OB+ATR | FIB-SL: Beyond 0.786 Fib | Dynamic: ATR-based",
+     group="💰 Risk Management")
+
+atrBuffer = input.float(0.3, "ATR Buffer Multiplier",
+     minval=0.1, maxval=2.0, step=0.1,
+     tooltip="ATR multiplier for stop loss buffer",
+     group="💰 Risk Management")
+
+takeProfitType = input.string("RR", "Take Profit Logic",
+     options=["RR", "VSA"],
+     tooltip="RR: Risk/Reward ratio | VSA: Volume Spread Analysis",
+     group="💰 Risk Management")
+
+riskRewardRisk = input.float(1.0, "Risk (R)",
+     minval=0.1, maxval=10.0, step=0.1,
+     tooltip="Risk portion of Risk:Reward ratio",
+     group="💰 Risk Management")
+
+riskRewardReward = input.float(3.0, "Reward (R)",
+     minval=0.1, maxval=20.0, step=0.1,
+     tooltip="Reward portion of Risk:Reward ratio (3 = 1:3 RR)",
+     group="💰 Risk Management")
+
+useMaxRiskPerTrade = input.bool(true, "Enable Max Risk Per Trade",
+     tooltip="Limit maximum dollar risk per trade",
+     group="💰 Risk Management")
+
+maxRiskPerTrade = input.float(1000, "Max Risk Per Trade ($)",
+     minval=1, maxval=1000000,
+     tooltip="Maximum dollar amount to risk on a single trade",
+     group="💰 Risk Management")
+
+useMaxLossPerDay = input.bool(true, "Enable Max Loss Per Day",
+     tooltip="Stop trading after reaching daily loss limit",
+     group="💰 Risk Management")
+
+maxLossPerDay = input.float(1000, "Max Loss Per Day ($)",
+     minval=1, maxval=1000000,
+     tooltip="Maximum dollar loss allowed per day",
+     group="💰 Risk Management")
+
+useMaxLosingTrades = input.bool(true, "Enable Max Losing Trades",
+     tooltip="Stop trading after consecutive losing trades",
+     group="💰 Risk Management")
+
+maxLosingTrades = input.int(3, "Max Losing Trades Per Day",
+     minval=1, maxval=20,
+     tooltip="Maximum number of losing trades before stopping",
+     group="💰 Risk Management")
+
+// ============================================================================
+// INPUTS - VISUALIZATION
+// ============================================================================
+showFibLevels = input.bool(true, "Show Fibonacci Levels",
+     tooltip="Display Fibonacci retracement levels",
+     group="📊 Visualization")
+
+showStructure = input.bool(true, "Show Market Structure",
+     tooltip="Display BOS and CHoCH markers",
+     group="📊 Visualization")
+
+showEngulfing = input.bool(true, "Show Engulfing Candles",
+     tooltip="Highlight engulfing candle patterns",
+     group="📊 Visualization")
+
+showLabels = input.bool(true, "Show Info Labels",
+     tooltip="Display entry/exit and state information labels",
+     group="📊 Visualization")
+
+showMetricsTable = input.bool(true, "Show Performance Metrics",
+     tooltip="Display performance metrics table",
+     group="📊 Visualization")
+
+// ============================================================================
+// CALCULATIONS - EMA
+// ============================================================================
+fastEMA = ta.ema(close, fastEMALength)
+midEMA = ta.ema(close, midEMALength)
+emaCross = ta.crossover(fastEMA, midEMA)
+emaCrossUnder = ta.crossunder(fastEMA, midEMA)
+
+// ============================================================================
+// CALCULATIONS - ATR FOR STOP LOSS
+// ============================================================================
+atr = ta.atr(14)
+
+// ============================================================================
+// CALCULATIONS - VOLUME ANALYSIS
+// ============================================================================
+buyerVolume = close > open ? volume : 0
+sellerVolume = close < open ? volume : 0
+avgVolume = ta.sma(volume, 20)
+isLowVolume = volume < avgVolume * 0.7
+
+// ============================================================================
+// CALCULATIONS - SWING POINTS
+// ============================================================================
+swingHigh = ta.pivothigh(high, swingHighBars, swingHighBars)
+swingLow = ta.pivotlow(low, swingLowBars, swingLowBars)
+
+var float lastSwingHigh = na
+var float lastSwingLow = na
+var int lastSwingHighBar = na
+var int lastSwingLowBar = na
+
+if not na(swingHigh)
+    lastSwingHigh := swingHigh
+    lastSwingHighBar := bar_index - swingHighBars
+
+if not na(swingLow)
+    lastSwingLow := swingLow
+    lastSwingLowBar := bar_index - swingLowBars
+
+// ============================================================================
+// CALCULATIONS - ORDER BLOCK DETECTION
+// ============================================================================
+bullishOBCandidate = buyerVolume > sellerVolume and buyerVolume > avgVolume
+bearishOBCandidate = sellerVolume > buyerVolume and sellerVolume > avgVolume
+
+var array<box> bullishOBBoxes = array.new<box>()
+var array<box> bearishOBBoxes = array.new<box>()
+var array<float> bullishOBHighs = array.new<float>()
+var array<float> bullishOBLows = array.new<float>()
+var array<float> bearishOBHighs = array.new<float>()
+var array<float> bearishOBLows = array.new<float>()
+var array<int> bullishOBBars = array.new<int>()
+var array<int> bearishOBBars = array.new<int>()
+
+maxZones = switch obZoneCounts
+    "High" => 10
+    "Medium" => 5
+    "Low" => 3
+    "One" => 1
+    => 5
+
+if bullishOBCandidate and showOBBoxes
+    if array.size(bullishOBBoxes) >= maxZones
+        oldBox = array.shift(bullishOBBoxes)
+        box.delete(oldBox)
+        array.shift(bullishOBHighs)
+        array.shift(bullishOBLows)
+        array.shift(bullishOBBars)
+
+    obHigh = high
+    obLow = low
+    boxRight = bar_index + obBoxExtend
+    newBox = box.new(bar_index, obHigh, boxRight, obLow,
+         border_color=color.new(color.green, 50),
+         bgcolor=color.new(color.green, 90),
+         border_width=1,
+         extend=extend.none)
+
+    array.push(bullishOBBoxes, newBox)
+    array.push(bullishOBHighs, obHigh)
+    array.push(bullishOBLows, obLow)
+    array.push(bullishOBBars, bar_index)
+
+if bearishOBCandidate and showOBBoxes
+    if array.size(bearishOBBoxes) >= maxZones
+        oldBox = array.shift(bearishOBBoxes)
+        box.delete(oldBox)
+        array.shift(bearishOBHighs)
+        array.shift(bearishOBLows)
+        array.shift(bearishOBBars)
+
+    obHigh = high
+    obLow = low
+    boxRight = bar_index + obBoxExtend
+    newBox = box.new(bar_index, obHigh, boxRight, obLow,
+         border_color=color.new(color.red, 50),
+         bgcolor=color.new(color.red, 90),
+         border_width=1,
+         extend=extend.none)
+
+    array.push(bearishOBBoxes, newBox)
+    array.push(bearishOBHighs, obHigh)
+    array.push(bearishOBLows, obLow)
+    array.push(bearishOBBars, bar_index)
+
+// Update box positions
+if showOBBoxes
+    for i = 0 to array.size(bullishOBBoxes) - 1
+        boxObj = array.get(bullishOBBoxes, i)
+        boxHigh = array.get(bullishOBHighs, i)
+        boxLow = array.get(bullishOBLows, i)
+        boxLeft = array.get(bullishOBBars, i)
+        box.set_right(boxObj, bar_index + obBoxExtend)
+
+    for i = 0 to array.size(bearishOBBoxes) - 1
+        boxObj = array.get(bearishOBBoxes, i)
+        boxHigh = array.get(bearishOBHighs, i)
+        boxLow = array.get(bearishOBLows, i)
+        boxLeft = array.get(bearishOBBars, i)
+        box.set_right(boxObj, bar_index + obBoxExtend)
+
+// ============================================================================
+// CALCULATIONS - MARKET STRUCTURE (BOS/CHoCH)
+// ============================================================================
+var string currentTrend = "neutral"
+var bool bosDetected = false
+var bool chochDetected = false
+var int lastBOSBar = na
+var int lastCHoCHBar = na
+
+bosDetected := false
+chochDetected := false
+
+if not na(lastSwingHigh) and not na(lastSwingLow)
+    if close > lastSwingHigh and currentTrend == "bullish"
+        bosDetected := true
+        lastBOSBar := bar_index
+        if showStructure and showLabels
+            label.new(bar_index, high,
+                 text="BOS ↑",
+                 style=label.style_label_up,
+                 color=color.new(color.green, 30),
+                 textcolor=color.white,
+                 size=size.small)
+
+    if close < lastSwingLow and currentTrend == "bearish"
+        bosDetected := true
+        lastBOSBar := bar_index
+        if showStructure and showLabels
+            label.new(bar_index, low,
+                 text="BOS ↓",
+                 style=label.style_label_down,
+                 color=color.new(color.red, 30),
+                 textcolor=color.white,
+                 size=size.small)
+
+    if close > lastSwingHigh and currentTrend == "bearish"
+        chochDetected := true
+        lastCHoCHBar := bar_index
+        currentTrend := "bullish"
+        if showStructure and showLabels
+            label.new(bar_index, high,
+                 text="CHoCH ↑",
+                 style=label.style_label_up,
+                 color=color.new(color.blue, 30),
+                 textcolor=color.white,
+                 size=size.small)
+
+    if close < lastSwingLow and currentTrend == "bullish"
+        chochDetected := true
+        lastCHoCHBar := bar_index
+        currentTrend := "bearish"
+        if showStructure and showLabels
+            label.new(bar_index, low,
+                 text="CHoCH ↓",
+                 style=label.style_label_down,
+                 color=color.new(color.blue, 30),
+                 textcolor=color.white,
+                 size=size.small)
+
+if currentTrend == "neutral"
+    if close > open
+        currentTrend := "bullish"
+    else if close < open
+        currentTrend := "bearish"
+
+// ============================================================================
+// CALCULATIONS - FIBONACCI RETRACEMENT
+// ============================================================================
+var float fibHigh = na
+var float fibLow = na
+var array<line> fibLines = array.new<line>()
+var array<label> fibLabels = array.new<label>()
+
+fib050 = 0.500
+fib0618 = 0.618
+fib0706 = 0.706
+fib0786 = 0.786
+fib0790 = 0.790
+
+var bool fibSetup = false
+var float fib050Price = na
+var float fib0618Price = na
+var float fib0706Price = na
+var float fib0786Price = na
+var float fib0790Price = na
+
+if not na(lastSwingHigh) and not na(lastSwingLow)
+    range = lastSwingHigh - lastSwingLow
+
+    if currentTrend == "bullish" and (bosDetected or chochDetected)
+        fibHigh := lastSwingHigh
+        fibLow := lastSwingLow
+        fib050Price := fibHigh - (range * fib050)
+        fib0618Price := fibHigh - (range * fib0618)
+        fib0706Price := fibHigh - (range * fib0706)
+        fib0786Price := fibHigh - (range * fib0786)
+        fib0790Price := fibHigh - (range * fib0790)
+        fibSetup := true
+
+    else if currentTrend == "bearish" and (bosDetected or chochDetected)
+        fibHigh := lastSwingHigh
+        fibLow := lastSwingLow
+        fib050Price := fibLow + (range * fib050)
+        fib0618Price := fibLow + (range * fib0618)
+        fib0706Price := fibLow + (range * fib0706)
+        fib0786Price := fibLow + (range * fib0786)
+        fib0790Price := fibLow + (range * fib0790)
+        fibSetup := true
+
+// ============================================================================
+// CALCULATIONS - ENGULFING CANDLE DETECTION
+// ============================================================================
+bullishEngulfing = close > open and close[1] < open[1] and
+     close > open[1] and open < close[1]
+
+bearishEngulfing = close < open and close[1] > open[1] and
+     close < open[1] and open > close[1]
+
+var bool mtfBullishEngulfing = false
+var bool mtfBearishEngulfing = false
+
+if useMTFEngulfing and timeframe.in_seconds(engulfingTF) < timeframe.in_seconds()
+    [mtfOpen, mtfClose, mtfOpen1, mtfClose1] = request.security(syminfo.tickerid, engulfingTF,
+         [open, close, open[1], close[1]],
+         lookahead=barmerge.lookahead_off)
+
+    mtfBullishEngulfing := mtfClose > mtfOpen and mtfClose1 < mtfOpen1 and
+         mtfClose > mtfOpen1 and mtfOpen < mtfClose1
+
+    mtfBearishEngulfing := mtfClose < mtfOpen and mtfClose1 > mtfOpen1 and
+         mtfClose < mtfOpen1 and mtfOpen > mtfClose1
+else
+    mtfBullishEngulfing := bullishEngulfing
+    mtfBearishEngulfing := bearishEngulfing
+
+if showEngulfing and bullishEngulfing
+    bgcolor(color.new(color.green, 85), title="Bullish Engulfing")
+
+if showEngulfing and bearishEngulfing
+    bgcolor(color.new(color.red, 85), title="Bearish Engulfing")
+
+// ============================================================================
+// CALCULATIONS - PREMIUM/DISCOUNT ZONES
+// ============================================================================
+var float premiumDiscountLevel = na
+
+if not na(lastSwingHigh) and not na(lastSwingLow)
+    premiumDiscountLevel := (lastSwingHigh + lastSwingLow) / 2
+
+isPremiumZone = not na(premiumDiscountLevel) and close > premiumDiscountLevel
+isDiscountZone = not na(premiumDiscountLevel) and close < premiumDiscountLevel
+
+// ============================================================================
+// RISK MANAGEMENT - DAILY LIMITS TRACKING
+// ============================================================================
+var float dailyPnL = 0.0
+var int dailyLosingTrades = 0
+var int lastTradeDay = 0
+var bool dailyLimitReached = false
+
+if dayofweek != dayofweek[1]
+    dailyPnL := 0.0
+    dailyLosingTrades := 0
+    dailyLimitReached := false
+    lastTradeDay := dayofweek
+
+if strategy.closedtrades > strategy.closedtrades[1]
+    lastTradePnL = strategy.netprofit - strategy.netprofit[1]
+    dailyPnL += lastTradePnL
+
+    if lastTradePnL < 0
+        dailyLosingTrades += 1
+    else
+        dailyLosingTrades := 0
+
+    if useMaxLossPerDay and dailyPnL <= -maxLossPerDay
+        dailyLimitReached := true
+
+    if useMaxLosingTrades and dailyLosingTrades >= maxLosingTrades
+        dailyLimitReached := true
+
+// ============================================================================
+// ENTRY LOGIC - PROGRESSIVE FIBONACCI ENTRIES
+// ============================================================================
+var bool waitingForEntry = false
+var string entryFibLevel = ""
+var float entryPrice = na
+var float stopLossPrice = na
+var float takeProfitPrice = na
+
+longEntryCondition = currentTrend == "bullish" and (bosDetected or chochDetected) and fibSetup and isDiscountZone and not dailyLimitReached
+
+shortEntryCondition = currentTrend == "bearish" and (bosDetected or chochDetected) and fibSetup and isPremiumZone and not dailyLimitReached
+
+checkLongFibEntry() =>
+    float price = na
+    string level = ""
+
+    if not na(fib050Price) and close <= fib050Price and close >= fib050Price * 0.998
+        price := close
+        level := "0.5"
+    else if not na(fib0618Price) and close <= fib0618Price and close >= fib0618Price * 0.998
+        price := close
+        level := "0.618"
+    else if not na(fib0706Price) and close <= fib0706Price and close >= fib0706Price * 0.998
+        price := close
+        level := "0.706"
+    else if not na(fib0790Price) and close <= fib0790Price and close >= fib0790Price * 0.998
+        price := close
+        level := "0.79"
+
+    [price, level]
+
+checkShortFibEntry() =>
+    float price = na
+    string level = ""
+
+    if not na(fib050Price) and close >= fib050Price and close <= fib050Price * 1.002
+        price := close
+        level := "0.5"
+    else if not na(fib0618Price) and close >= fib0618Price and close <= fib0618Price * 1.002
+        price := close
+        level := "0.618"
+    else if not na(fib0706Price) and close >= fib0706Price and close <= fib0706Price * 1.002
+        price := close
+        level := "0.706"
+    else if not na(fib0790Price) and close >= fib0790Price and close <= fib0790Price * 1.002
+        price := close
+        level := "0.79"
+
+    [price, level]
+
+if longEntryCondition and useEMARetracement and emaCross and strategy.position_size == 0
+    [fibPrice, fibLevel] = checkLongFibEntry()
+    if not na(fibPrice) and (mtfBullishEngulfing or not useMTFEngulfing)
+        waitingForEntry := true
+        entryFibLevel := fibLevel
+        entryPrice := fibPrice
+
+if shortEntryCondition and useEMARetracement and emaCrossUnder and strategy.position_size == 0
+    [fibPrice, fibLevel] = checkShortFibEntry()
+    if not na(fibPrice) and (mtfBearishEngulfing or not useMTFEngulfing)
+        waitingForEntry := true
+        entryFibLevel := fibLevel
+        entryPrice := fibPrice
+
+// ============================================================================
+// STOP LOSS & TAKE PROFIT CALCULATION
+// ============================================================================
+calculateStopLoss(isLong, entryPriceVal, obVal, fibVal) =>
+    float slPrice = na
+
+    if stopLossType == "OB-SL"
+        slPrice := isLong ? obVal - (atr * atrBuffer) : obVal + (atr * atrBuffer)
+    else if stopLossType == "FIB-SL"
+        slPrice := isLong ? fibVal - (atr * atrBuffer) : fibVal + (atr * atrBuffer)
+    else
+        slPrice := isLong ? entryPriceVal - (atr * 1.5) : entryPriceVal + (atr * 1.5)
+
+    slPrice
+
+calculateTakeProfit(isLong, entryPriceVal, slPriceVal) =>
+    float tpPrice = na
+
+    if takeProfitType == "RR"
+        risk = math.abs(entryPriceVal - slPriceVal)
+        reward = risk * (riskRewardReward / riskRewardRisk)
+        tpPrice := isLong ? entryPriceVal + reward : entryPriceVal - reward
+    else
+        tpPrice := isLong ? lastSwingHigh : lastSwingLow
+
+    tpPrice
+
+// ============================================================================
+// STRATEGY EXECUTION
+// ============================================================================
+if waitingForEntry and longEntryCondition and strategy.position_size == 0
+    obLow = array.size(bullishOBLows) > 0 ? array.get(bullishOBLows, array.size(bullishOBLows) - 1) : low
+    stopLossPrice := calculateStopLoss(true, entryPrice, obLow, fib0786Price)
+    takeProfitPrice := calculateTakeProfit(true, entryPrice, stopLossPrice)
+
+    validEntry = true
+
+    if not na(takeProfitPrice) and high >= takeProfitPrice
+        validEntry := false
+
+    if not na(obLow) and entryPrice < obLow
+        validEntry := false
+
+    if not isLowVolume
+        validEntry := false
+
+    if validEntry and not na(stopLossPrice) and not na(takeProfitPrice)
+        strategy.entry("Long", strategy.long,
+             comment="Long @ Fib " + entryFibLevel)
+
+        strategy.exit("Long Exit", "Long",
+             stop=stopLossPrice,
+             limit=takeProfitPrice,
+             comment="SL/TP")
+
+        if showLabels
+            longLabel = label.new(bar_index, low, "LONG\nFib: " + entryFibLevel + "\nSL: " + str.tostring(stopLossPrice, format.mintick) + "\nTP: " + str.tostring(takeProfitPrice, format.mintick), style=label.style_label_up, color=color.new(color.green, 20), textcolor=color.white, size=size.normal)
+
+    waitingForEntry := false
+
+if waitingForEntry and shortEntryCondition and strategy.position_size == 0
+    obHigh = array.size(bearishOBHighs) > 0 ? array.get(bearishOBHighs, array.size(bearishOBHighs) - 1) : high
+    stopLossPrice := calculateStopLoss(false, entryPrice, obHigh, fib0786Price)
+    takeProfitPrice := calculateTakeProfit(false, entryPrice, stopLossPrice)
+
+    validEntry = true
+
+    if not na(takeProfitPrice) and low <= takeProfitPrice
+        validEntry := false
+
+    if not na(obHigh) and entryPrice > obHigh
+        validEntry := false
+
+    if not isLowVolume
+        validEntry := false
+
+    if validEntry and not na(stopLossPrice) and not na(takeProfitPrice)
+        strategy.entry("Short", strategy.short,
+             comment="Short @ Fib " + entryFibLevel)
+
+        strategy.exit("Short Exit", "Short",
+             stop=stopLossPrice,
+             limit=takeProfitPrice,
+             comment="SL/TP")
+
+        if showLabels
+            shortLabel = label.new(bar_index, high, "SHORT\nFib: " + entryFibLevel + "\nSL: " + str.tostring(stopLossPrice, format.mintick) + "\nTP: " + str.tostring(takeProfitPrice, format.mintick), style=label.style_label_down, color=color.new(color.red, 20), textcolor=color.white, size=size.normal)
+
+    waitingForEntry := false
+
+// ============================================================================
+// PLOTS
+// ============================================================================
+plot(fastEMA, "Fast EMA", color=color.new(color.blue, 0), linewidth=1)
+plot(midEMA, "Mid EMA", color=color.new(color.orange, 0), linewidth=1)
+plot(premiumDiscountLevel, "50% Level", color=color.new(color.gray, 50), linewidth=1, style=plot.style_circles)
+
+plotshape(showFibLevels and not na(fib050Price) ? fib050Price : na, "Fib 0.5", location=location.absolute, style=shape.cross, color=color.new(color.yellow, 50), size=size.tiny)
+
+plotshape(showFibLevels and not na(fib0618Price) ? fib0618Price : na, "Fib 0.618", location=location.absolute, style=shape.cross, color=color.new(color.orange, 50), size=size.tiny)
+
+plotshape(showFibLevels and not na(fib0706Price) ? fib0706Price : na, "Fib 0.706", location=location.absolute, style=shape.cross, color=color.new(color.purple, 50), size=size.tiny)
+
+plotshape(showFibLevels and not na(fib0790Price) ? fib0790Price : na, "Fib 0.79", location=location.absolute, style=shape.cross, color=color.new(color.red, 50), size=size.tiny)
+
+// ============================================================================
+// PERFORMANCE METRICS TABLE
+// ============================================================================
+if showMetricsTable
+    var table metricsTable = table.new(position.top_right, 2, 8, border_width=1, border_color=color.gray, frame_color=color.gray, frame_width=1)
+
+    if barstate.islast
+        table.cell(metricsTable, 0, 0, "Metric", bgcolor=color.new(color.gray, 70), text_color=color.white, text_size=size.small)
+        table.cell(metricsTable, 1, 0, "Value", bgcolor=color.new(color.gray, 70), text_color=color.white, text_size=size.small)
+
+        table.cell(metricsTable, 0, 1, "Net Profit", text_size=size.small)
+        profitColor = strategy.netprofit >= 0 ? color.green : color.red
+        table.cell(metricsTable, 1, 1, str.tostring(strategy.netprofit, format.mintick), text_color=profitColor, text_size=size.small)
+
+        table.cell(metricsTable, 0, 2, "Total Trades", text_size=size.small)
+        table.cell(metricsTable, 1, 2, str.tostring(strategy.closedtrades), text_size=size.small)
+
+        winRate = strategy.closedtrades > 0 ? (strategy.wintrades / strategy.closedtrades) * 100 : 0
+        table.cell(metricsTable, 0, 3, "Win Rate", text_size=size.small)
+        winRateColor = winRate >= 50 ? color.green : color.red
+        table.cell(metricsTable, 1, 3, str.tostring(winRate, "#.##") + "%", text_color=winRateColor, text_size=size.small)
+
+        table.cell(metricsTable, 0, 4, "Profit Factor", text_size=size.small)
+        table.cell(metricsTable, 1, 4, str.tostring(strategy.grossprofit / math.max(strategy.grossloss, 1), "#.##"), text_size=size.small)
+
+        table.cell(metricsTable, 0, 5, "Max Drawdown", text_size=size.small)
+        table.cell(metricsTable, 1, 5, str.tostring(strategy.max_drawdown, format.mintick), text_color=color.red, text_size=size.small)
+
+        table.cell(metricsTable, 0, 6, "Avg Win/Loss", text_size=size.small)
+        avgWin = strategy.wintrades > 0 ? strategy.grossprofit / strategy.wintrades : 0
+        avgLoss = strategy.losstrades > 0 ? strategy.grossloss / strategy.losstrades : 0
+        table.cell(metricsTable, 1, 6, str.tostring(avgWin, format.mintick) + " / " + str.tostring(avgLoss, format.mintick), text_size=size.small)
+
+        table.cell(metricsTable, 0, 7, "Daily PnL", text_size=size.small)
+        dailyPnLColor = dailyPnL >= 0 ? color.green : color.red
+        table.cell(metricsTable, 1, 7, str.tostring(dailyPnL, format.mintick), text_color=dailyPnLColor, text_size=size.small)
+
+// ============================================================================
+// ALERTS
+// ============================================================================
+alertcondition(longEntryCondition and waitingForEntry, title="Long Entry Signal", message="Order Block Long Entry - Check for engulfing confirmation")
+
+alertcondition(shortEntryCondition and waitingForEntry, title="Short Entry Signal", message="Order Block Short Entry - Check for engulfing confirmation")
+
+alertcondition(dailyLimitReached, title="Daily Limit Reached", message="Daily trading limit reached - No more trades today")
