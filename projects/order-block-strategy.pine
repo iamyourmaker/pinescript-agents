@@ -1,6 +1,6 @@
 //@version=6
 strategy("Order Block Trading Strategy",
-     shorttitle="OB Strategy",
+     shorttitle="OB Strat",
      overlay=true,
      default_qty_type=strategy.percent_of_equity,
      default_qty_value=10,
@@ -441,11 +441,8 @@ else
     mtfBullishEngulfing := bullishEngulfing
     mtfBearishEngulfing := bearishEngulfing
 
-if showEngulfing and bullishEngulfing
-    bgcolor(color.new(color.green, 85), title="Bullish Engulfing")
-
-if showEngulfing and bearishEngulfing
-    bgcolor(color.new(color.red, 85), title="Bearish Engulfing")
+bgcolor(showEngulfing and bullishEngulfing ? color.new(color.green, 85) : na, title="Bullish Engulfing")
+bgcolor(showEngulfing and bearishEngulfing ? color.new(color.red, 85) : na, title="Bearish Engulfing")
 
 // ============================================================================
 // CALCULATIONS - PREMIUM/DISCOUNT ZONES
