@@ -292,19 +292,21 @@ if bearishOBCandidate and showOBBoxes
 
 // Update box positions
 if showOBBoxes
-    for i = 0 to array.size(bullishOBBoxes) - 1
-        boxObj = array.get(bullishOBBoxes, i)
-        boxHigh = array.get(bullishOBHighs, i)
-        boxLow = array.get(bullishOBLows, i)
-        boxLeft = array.get(bullishOBBars, i)
-        box.set_right(boxObj, bar_index + obBoxExtend)
+    if array.size(bullishOBBoxes) > 0
+        for i = 0 to array.size(bullishOBBoxes) - 1
+            boxObj = array.get(bullishOBBoxes, i)
+            boxHigh = array.get(bullishOBHighs, i)
+            boxLow = array.get(bullishOBLows, i)
+            boxLeft = array.get(bullishOBBars, i)
+            box.set_right(boxObj, bar_index + obBoxExtend)
 
-    for i = 0 to array.size(bearishOBBoxes) - 1
-        boxObj = array.get(bearishOBBoxes, i)
-        boxHigh = array.get(bearishOBHighs, i)
-        boxLow = array.get(bearishOBLows, i)
-        boxLeft = array.get(bearishOBBars, i)
-        box.set_right(boxObj, bar_index + obBoxExtend)
+    if array.size(bearishOBBoxes) > 0
+        for i = 0 to array.size(bearishOBBoxes) - 1
+            boxObj = array.get(bearishOBBoxes, i)
+            boxHigh = array.get(bearishOBHighs, i)
+            boxLow = array.get(bearishOBLows, i)
+            boxLeft = array.get(bearishOBBars, i)
+            box.set_right(boxObj, bar_index + obBoxExtend)
 
 // ============================================================================
 // CALCULATIONS - MARKET STRUCTURE (BOS/CHoCH)
