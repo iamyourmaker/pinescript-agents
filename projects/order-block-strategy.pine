@@ -393,26 +393,26 @@ var float fib0786Price = na
 var float fib0790Price = na
 
 if not na(lastSwingHigh) and not na(lastSwingLow)
-    range = lastSwingHigh - lastSwingLow
+    priceRange = lastSwingHigh - lastSwingLow
 
     if currentTrend == "bullish" and (bosDetected or chochDetected)
         fibHigh := lastSwingHigh
         fibLow := lastSwingLow
-        fib050Price := fibHigh - (range * fib050)
-        fib0618Price := fibHigh - (range * fib0618)
-        fib0706Price := fibHigh - (range * fib0706)
-        fib0786Price := fibHigh - (range * fib0786)
-        fib0790Price := fibHigh - (range * fib0790)
+        fib050Price := fibHigh - (priceRange * fib050)
+        fib0618Price := fibHigh - (priceRange * fib0618)
+        fib0706Price := fibHigh - (priceRange * fib0706)
+        fib0786Price := fibHigh - (priceRange * fib0786)
+        fib0790Price := fibHigh - (priceRange * fib0790)
         fibSetup := true
 
     else if currentTrend == "bearish" and (bosDetected or chochDetected)
         fibHigh := lastSwingHigh
         fibLow := lastSwingLow
-        fib050Price := fibLow + (range * fib050)
-        fib0618Price := fibLow + (range * fib0618)
-        fib0706Price := fibLow + (range * fib0706)
-        fib0786Price := fibLow + (range * fib0786)
-        fib0790Price := fibLow + (range * fib0790)
+        fib050Price := fibLow + (priceRange * fib050)
+        fib0618Price := fibLow + (priceRange * fib0618)
+        fib0706Price := fibLow + (priceRange * fib0706)
+        fib0786Price := fibLow + (priceRange * fib0786)
+        fib0790Price := fibLow + (priceRange * fib0790)
         fibSetup := true
 
 // ============================================================================
