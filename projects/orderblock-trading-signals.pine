@@ -341,18 +341,16 @@ if activeSignal.isActive
         if activeSignal.isBullish and high >= activeSignal.tpPrice
             activeSignal.status := "tp_hit"
             if not na(activeSignal.entryLabel)
-                label.set_text(activeSignal.entryLabel,
-                     label.get_text(activeSignal.entryLabel) + "\n✓ TP HIT")
-                label.set_color(activeSignal.entryLabel, color.new(#089981, 70))
+                label.set_text(activeSignal.entryLabel, "LONG ✓")
+                label.set_color(activeSignal.entryLabel, color.new(#089981, 85))
             if enableAlerts
                 alert("Take Profit Hit! Entry: " + str.tostring(activeSignal.entryPrice) +
                      " TP: " + str.tostring(activeSignal.tpPrice), alert.freq_once_per_bar)
         else if activeSignal.isBullish == false and low <= activeSignal.tpPrice
             activeSignal.status := "tp_hit"
             if not na(activeSignal.entryLabel)
-                label.set_text(activeSignal.entryLabel,
-                     label.get_text(activeSignal.entryLabel) + "\n✓ TP HIT")
-                label.set_color(activeSignal.entryLabel, color.new(#089981, 70))
+                label.set_text(activeSignal.entryLabel, "SHORT ✓")
+                label.set_color(activeSignal.entryLabel, color.new(#089981, 85))
             if enableAlerts
                 alert("Take Profit Hit! Entry: " + str.tostring(activeSignal.entryPrice) +
                      " TP: " + str.tostring(activeSignal.tpPrice), alert.freq_once_per_bar)
@@ -361,18 +359,16 @@ if activeSignal.isActive
         if activeSignal.isBullish and low <= activeSignal.slPrice
             activeSignal.status := "sl_hit"
             if not na(activeSignal.entryLabel)
-                label.set_text(activeSignal.entryLabel,
-                     label.get_text(activeSignal.entryLabel) + "\n✗ SL HIT")
-                label.set_color(activeSignal.entryLabel, color.new(#f23645, 70))
+                label.set_text(activeSignal.entryLabel, "LONG ✗")
+                label.set_color(activeSignal.entryLabel, color.new(#f23645, 85))
             if enableAlerts
                 alert("Stop Loss Hit! Entry: " + str.tostring(activeSignal.entryPrice) +
                      " SL: " + str.tostring(activeSignal.slPrice), alert.freq_once_per_bar)
         else if activeSignal.isBullish == false and high >= activeSignal.slPrice
             activeSignal.status := "sl_hit"
             if not na(activeSignal.entryLabel)
-                label.set_text(activeSignal.entryLabel,
-                     label.get_text(activeSignal.entryLabel) + "\n✗ SL HIT")
-                label.set_color(activeSignal.entryLabel, color.new(#f23645, 70))
+                label.set_text(activeSignal.entryLabel, "SHORT ✗")
+                label.set_color(activeSignal.entryLabel, color.new(#f23645, 85))
             if enableAlerts
                 alert("Stop Loss Hit! Entry: " + str.tostring(activeSignal.entryPrice) +
                      " SL: " + str.tostring(activeSignal.slPrice), alert.freq_once_per_bar)
@@ -413,24 +409,21 @@ if newBullishEntry and not na(signalOB)
         activeSignal.entryLabel := label.new(
              x=bar_index,
              y=low,
-             text="LONG\nEntry: " + str.tostring(close, format.mintick) +
-                  "\nTP: " + str.tostring(tpLevel, format.mintick) +
-                  "\nSL: " + str.tostring(slLevel, format.mintick) +
-                  "\nR:R " + str.tostring(rr, "#.##"),
-             color=color.new(#089981, 80),
+             text="LONG",
+             color=color.new(#089981, 90),
              textcolor=#089981,
              style=label.style_label_up,
-             size=size.normal)
+             size=size.small)
 
     // Create TP/SL lines
     if showTPSL
         ext = extendTPSL ? extend.right : extend.none
         activeSignal.tpLine := line.new(
              x1=bar_index, y1=tpLevel, x2=bar_index+10, y2=tpLevel,
-             color=tpColor, style=line.style_dashed, width=2, extend=ext)
+             color=tpColor, style=line.style_dashed, width=1, extend=ext)
         activeSignal.slLine := line.new(
              x1=bar_index, y1=slLevel, x2=bar_index+10, y2=slLevel,
-             color=slColor, style=line.style_dashed, width=2, extend=ext)
+             color=slColor, style=line.style_dashed, width=1, extend=ext)
 
     // Update signal state
     activeSignal.isActive := true
@@ -465,24 +458,21 @@ if newBearishEntry and not na(signalOB)
         activeSignal.entryLabel := label.new(
              x=bar_index,
              y=high,
-             text="SHORT\nEntry: " + str.tostring(close, format.mintick) +
-                  "\nTP: " + str.tostring(tpLevel, format.mintick) +
-                  "\nSL: " + str.tostring(slLevel, format.mintick) +
-                  "\nR:R " + str.tostring(rr, "#.##"),
-             color=color.new(#f23645, 80),
+             text="SHORT",
+             color=color.new(#f23645, 90),
              textcolor=#f23645,
              style=label.style_label_down,
-             size=size.normal)
+             size=size.small)
 
     // Create TP/SL lines
     if showTPSL
         ext = extendTPSL ? extend.right : extend.none
         activeSignal.tpLine := line.new(
              x1=bar_index, y1=tpLevel, x2=bar_index+10, y2=tpLevel,
-             color=tpColor, style=line.style_dashed, width=2, extend=ext)
+             color=tpColor, style=line.style_dashed, width=1, extend=ext)
         activeSignal.slLine := line.new(
              x1=bar_index, y1=slLevel, x2=bar_index+10, y2=slLevel,
-             color=slColor, style=line.style_dashed, width=2, extend=ext)
+             color=slColor, style=line.style_dashed, width=1, extend=ext)
 
     // Update signal state
     activeSignal.isActive := true
@@ -516,20 +506,39 @@ if obShowCount > 0 and array.size(bullishOBs) > 0
         if not na(ob.displayBox)
             box.delete(ob.displayBox)
 
-        // Create new box
-        boxColor = ob.isMitigated ? obMitigatedColor : obBullColor
-        boxExt = obExtend and not ob.isMitigated ? extend.right : extend.none
+        // Create order block visualization
+        if not ob.isMitigated
+            // Active order block - show as filled box extending right
+            ob.displayBox := box.new(
+                 left=ob.location,
+                 top=ob.top,
+                 right=time,
+                 bottom=ob.bottom,
+                 border_color=na,
+                 bgcolor=obBullColor,
+                 xloc=xloc.bar_time)
 
-        ob.displayBox := box.new(
-             left=ob.location,
-             top=ob.top,
-             right=time,
-             bottom=ob.bottom,
-             border_color=color.new(#089981, 50),
-             bgcolor=boxColor,
-             border_width=1,
-             extend=boxExt,
-             xloc=xloc.bar_time)
+            // Extension box
+            if obExtend
+                box.new(
+                     left=time,
+                     top=ob.top,
+                     right=time + 1,
+                     bottom=ob.bottom,
+                     border_color=na,
+                     bgcolor=obBullColor,
+                     xloc=xloc.bar_time,
+                     extend=extend.right)
+        else
+            // Mitigated order block - show as grayed out
+            ob.displayBox := box.new(
+                 left=ob.location,
+                 top=ob.top,
+                 right=time,
+                 bottom=ob.bottom,
+                 border_color=na,
+                 bgcolor=obMitigatedColor,
+                 xloc=xloc.bar_time)
 
 // Display bearish order blocks
 if obShowCount > 0 and array.size(bearishOBs) > 0
@@ -541,20 +550,39 @@ if obShowCount > 0 and array.size(bearishOBs) > 0
         if not na(ob.displayBox)
             box.delete(ob.displayBox)
 
-        // Create new box
-        boxColor = ob.isMitigated ? obMitigatedColor : obBearColor
-        boxExt = obExtend and not ob.isMitigated ? extend.right : extend.none
+        // Create order block visualization
+        if not ob.isMitigated
+            // Active order block - show as filled box extending right
+            ob.displayBox := box.new(
+                 left=ob.location,
+                 top=ob.top,
+                 right=time,
+                 bottom=ob.bottom,
+                 border_color=na,
+                 bgcolor=obBearColor,
+                 xloc=xloc.bar_time)
 
-        ob.displayBox := box.new(
-             left=ob.location,
-             top=ob.top,
-             right=time,
-             bottom=ob.bottom,
-             border_color=color.new(#f23645, 50),
-             bgcolor=boxColor,
-             border_width=1,
-             extend=boxExt,
-             xloc=xloc.bar_time)
+            // Extension box
+            if obExtend
+                box.new(
+                     left=time,
+                     top=ob.top,
+                     right=time + 1,
+                     bottom=ob.bottom,
+                     border_color=na,
+                     bgcolor=obBearColor,
+                     xloc=xloc.bar_time,
+                     extend=extend.right)
+        else
+            // Mitigated order block - show as grayed out
+            ob.displayBox := box.new(
+                 left=ob.location,
+                 top=ob.top,
+                 right=time,
+                 bottom=ob.bottom,
+                 border_color=na,
+                 bgcolor=obMitigatedColor,
+                 xloc=xloc.bar_time)
 
 // ════════════════════════════════════════════════════════════════════════════════
 // DEBUG PLOTS
