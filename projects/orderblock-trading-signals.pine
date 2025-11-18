@@ -136,21 +136,27 @@ isPriceInOB(ob, method) =>
 
 // Clean up old objects
 cleanupObjects() =>
-    // Clean bullish OBs
-    if array.size(bullishOBs) > obShowCount
-        for i = array.size(bullishOBs) - 1 to obShowCount by -1
-            ob = array.get(bullishOBs, i)
-            if not na(ob.displayBox)
-                box.delete(ob.displayBox)
-            array.remove(bullishOBs, i)
+    // Clean bullish OBs - remove excess order blocks beyond the display count
+    bullishSize = array.size(bullishOBs)
+    if bullishSize > obShowCount
+        // Remove from the end (oldest) working backwards
+        for i = bullishSize - 1 to obShowCount by -1
+            if i < bullishSize  // Safety check
+                ob = array.get(bullishOBs, i)
+                if not na(ob.displayBox)
+                    box.delete(ob.displayBox)
+                array.remove(bullishOBs, i)
 
-    // Clean bearish OBs
-    if array.size(bearishOBs) > obShowCount
-        for i = array.size(bearishOBs) - 1 to obShowCount by -1
-            ob = array.get(bearishOBs, i)
-            if not na(ob.displayBox)
-                box.delete(ob.displayBox)
-            array.remove(bearishOBs, i)
+    // Clean bearish OBs - remove excess order blocks beyond the display count
+    bearishSize = array.size(bearishOBs)
+    if bearishSize > obShowCount
+        // Remove from the end (oldest) working backwards
+        for i = bearishSize - 1 to obShowCount by -1
+            if i < bearishSize  // Safety check
+                ob = array.get(bearishOBs, i)
+                if not na(ob.displayBox)
+                    box.delete(ob.displayBox)
+                array.remove(bearishOBs, i)
 
 // ════════════════════════════════════════════════════════════════════════════════
 // MARKET STRUCTURE DETECTION
