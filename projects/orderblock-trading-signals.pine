@@ -101,7 +101,7 @@ var OrderBlock[] bearishOBs = array.new<OrderBlock>()
 
 var TradeSignal activeSignal = TradeSignal.new(
      isActive=false,
-     isBullish=na,
+     isBullish=false,
      entryPrice=na,
      tpPrice=na,
      slPrice=na,
@@ -244,6 +244,9 @@ if showStructure and (bosDetected or chochDetected)
 // ORDER BLOCK CREATION
 // ════════════════════════════════════════════════════════════════════════════════
 
+// Calculate ATR value (must be called every bar for consistency)
+atrValue = calcATR(obAtrLength)
+
 // Create order blocks after structure breaks
 if bullishBreak and bar_index > swingLength
     // Find the last bearish candle before the break (order block)
@@ -254,7 +257,6 @@ if bullishBreak and bar_index > swingLength
             break
 
     if obIndex > 0
-        atrValue = calcATR(obAtrLength)
         obTop = obConstructionMode == "Full" ? high[obIndex] : math.min(high[obIndex], low[obIndex] + atrValue)
         obBottom = low[obIndex]
         obMid = (obTop + obBottom) / 2
@@ -281,7 +283,6 @@ if bearishBreak and bar_index > swingLength
             break
 
     if obIndex > 0
-        atrValue = calcATR(obAtrLength)
         obTop = high[obIndex]
         obBottom = obConstructionMode == "Full" ? low[obIndex] : math.max(low[obIndex], high[obIndex] - atrValue)
         obMid = (obTop + obBottom) / 2
