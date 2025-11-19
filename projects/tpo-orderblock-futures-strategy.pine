@@ -414,28 +414,29 @@ if bearishOBFormed and isInSession
         array.shift(orderBlocks)
 
 // Update order block validity
-for i = 0 to array.size(orderBlocks) - 1
-    ob = array.get(orderBlocks, i)
-    barsActive = bar_index - ob.startBar
+if array.size(orderBlocks) > 0
+    for i = 0 to array.size(orderBlocks) - 1
+        ob = array.get(orderBlocks, i)
+        barsActive = bar_index - ob.startBar
 
-    // Invalidate if too old
-    if barsActive > obValidityBars
-        ob.isValid := false
+        // Invalidate if too old
+        if barsActive > obValidityBars
+            ob.isValid := false
 
-    // Invalidate if price breaks through
-    if ob.isBullish and low < ob.bottom
-        ob.isValid := false
+        // Invalidate if price breaks through
+        if ob.isBullish and low < ob.bottom
+            ob.isValid := false
 
-    if not ob.isBullish and high > ob.top
-        ob.isValid := false
+        if not ob.isBullish and high > ob.top
+            ob.isValid := false
 
-    array.set(orderBlocks, i, ob)
+        array.set(orderBlocks, i, ob)
 
-    // Update box visibility
-    if i < array.size(orderBlockBoxes)
-        currentBox = array.get(orderBlockBoxes, i)
-        if not ob.isValid and not na(currentBox)
-            box.delete(currentBox)
+        // Update box visibility
+        if i < array.size(orderBlockBoxes)
+            currentBox = array.get(orderBlockBoxes, i)
+            if not ob.isValid and not na(currentBox)
+                box.delete(currentBox)
 
 // ============================================================================
 // TRADING LOGIC
@@ -452,18 +453,19 @@ nearestBullishOBTop := na
 nearestBearishOBBottom := na
 nearestBearishOBTop := na
 
-for i = 0 to array.size(orderBlocks) - 1
-    ob = array.get(orderBlocks, i)
+if array.size(orderBlocks) > 0
+    for i = 0 to array.size(orderBlocks) - 1
+        ob = array.get(orderBlocks, i)
 
-    if ob.isValid
-        if ob.isBullish
-            if na(nearestBullishOBBottom) or (close >= ob.bottom and close <= ob.top)
-                nearestBullishOBBottom := ob.bottom
-                nearestBullishOBTop := ob.top
-        else
-            if na(nearestBearishOBBottom) or (close >= ob.bottom and close <= ob.top)
-                nearestBearishOBBottom := ob.bottom
-                nearestBearishOBTop := ob.top
+        if ob.isValid
+            if ob.isBullish
+                if na(nearestBullishOBBottom) or (close >= ob.bottom and close <= ob.top)
+                    nearestBullishOBBottom := ob.bottom
+                    nearestBullishOBTop := ob.top
+            else
+                if na(nearestBearishOBBottom) or (close >= ob.bottom and close <= ob.top)
+                    nearestBearishOBBottom := ob.bottom
+                    nearestBearishOBTop := ob.top
 
 // Check if price is at order block
 atBullishOB = not na(nearestBullishOBBottom) and
@@ -639,9 +641,10 @@ if showStatsTable and barstate.islast
     table.cell(statsTable, 0, 5, "Active OBs", text_color=color.white)
 
     validOBCount = 0
-    for i = 0 to array.size(orderBlocks) - 1
-        if array.get(orderBlocks, i).isValid
-            validOBCount += 1
+    if array.size(orderBlocks) > 0
+        for i = 0 to array.size(orderBlocks) - 1
+            if array.get(orderBlocks, i).isValid
+                validOBCount += 1
 
     table.cell(statsTable, 1, 5, str.tostring(validOBCount), text_color=color.aqua)
 
