@@ -603,18 +603,17 @@ plot(showInitialBalance and not na(ibLow) ? ibLow : na, "IB Low",
      style=plot.style_stepline)
 
 // Entry/Exit Markers
-if showEntryExitMarkers
-    plotshape(longCondition and canTrade and barstate.isconfirmed, "Long Entry",
-         shape.triangleup,
-         location.belowbar,
-         color.new(color.green, 0),
-         size=size.small)
+plotshape(showEntryExitMarkers and longCondition and canTrade and barstate.isconfirmed, "Long Entry",
+     shape.triangleup,
+     location.belowbar,
+     color.new(color.green, 0),
+     size=size.small)
 
-    plotshape(shortCondition and canTrade and barstate.isconfirmed, "Short Entry",
-         shape.triangledown,
-         location.abovebar,
-         color.new(color.red, 0),
-         size=size.small)
+plotshape(showEntryExitMarkers and shortCondition and canTrade and barstate.isconfirmed, "Short Entry",
+     shape.triangledown,
+     location.abovebar,
+     color.new(color.red, 0),
+     size=size.small)
 
 // Statistics Table
 if showStatsTable and barstate.islast
