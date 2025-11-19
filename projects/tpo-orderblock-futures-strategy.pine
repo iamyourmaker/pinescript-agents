@@ -230,10 +230,11 @@ if isInSession
 
             // Find if price level exists
             idx = -1
-            for j = 0 to array.size(tpoPrices) - 1
-                if math.abs(array.get(tpoPrices, j) - price) < (priceRange / numLevels / 2)
-                    idx := j
-                    break
+            if array.size(tpoPrices) > 0
+                for j = 0 to array.size(tpoPrices) - 1
+                    if math.abs(array.get(tpoPrices, j) - price) < (priceRange / numLevels / 2)
+                        idx := j
+                        break
 
             if idx >= 0
                 // Increment existing level
