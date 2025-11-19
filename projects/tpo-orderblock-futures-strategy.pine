@@ -44,17 +44,6 @@ getSessionTime() =>
 sessionTime = getSessionTime()
 
 // TPO Settings
-tpoMethod = input.string("Time-Based", "TPO Calculation Method",
-     options=["Time-Based", "Volume-Weighted"],
-     group="TPO/Market Profile Settings",
-     tooltip="Time-Based uses price bars, Volume-Weighted incorporates volume")
-
-tpoPeriod = input.int(30, "TPO Period (minutes)",
-     minval=1,
-     maxval=240,
-     group="TPO/Market Profile Settings",
-     tooltip="Time period for each TPO calculation")
-
 valueAreaPercent = input.float(70.0, "Value Area %",
      minval=50,
      maxval=90,
@@ -65,12 +54,6 @@ valueAreaPercent = input.float(70.0, "Value Area %",
 showInitialBalance = input.bool(true, "Show Initial Balance",
      group="TPO/Market Profile Settings",
      tooltip="Display first hour high/low range")
-
-ibPeriodMinutes = input.int(60, "Initial Balance Period (minutes)",
-     minval=30,
-     maxval=120,
-     step=30,
-     group="TPO/Market Profile Settings")
 
 // Order Block Settings
 obSensitivity = input.int(3, "Order Block Sensitivity",
@@ -121,7 +104,7 @@ minDistanceToTPO = input.float(0.5, "Min Distance to TPO Level (%)",
      tooltip="Minimum distance from order block to TPO level for entry")
 
 // Risk Management
-stopLossMethod = input.string("Order Block Size", "Stop Loss Method",
+stopLossMethod = input.string("ATR", "Stop Loss Method",
      options=["Order Block Size", "ATR", "Fixed %"],
      group="Risk Management",
      tooltip="Method for calculating stop loss")
@@ -184,13 +167,13 @@ showStatsTable = input.bool(true, "Show Statistics Table",
      group="Visualization")
 
 // Colors
-colorVAH = input.color(color.new(color.red, 50), "VAH Color",
+colorVAH = input.color(color.new(color.purple, 50), "VAH Color",
      group="Colors")
 
-colorVAL = input.color(color.new(color.green, 50), "VAL Color",
+colorVAL = input.color(color.new(color.orange, 50), "VAL Color",
      group="Colors")
 
-colorPOC = input.color(color.new(color.orange, 30), "POC Color",
+colorPOC = input.color(color.new(color.blue, 30), "POC Color",
      group="Colors")
 
 colorBullishOB = input.color(color.new(color.green, 80), "Bullish Order Block",
@@ -204,67 +187,61 @@ colorBearishOB = input.color(color.new(color.red, 80), "Bearish Order Block",
 // ============================================================================
 
 isInSession = not na(time(timeframe.period, sessionTime))
-isNewSession = ta.change(time(timeframe.period, sessionTime))
+isNewSession = ta.change(time(timeframe.period, sessionTime)) != 0
 
 // Session tracking
 var int sessionBarCount = 0
 var float sessionHigh = na
 var float sessionLow = na
-var float sessionOpen = na
 
 if isNewSession
     sessionBarCount := 0
     sessionHigh := high
     sessionLow := low
-    sessionOpen := open
 else if isInSession
     sessionBarCount += 1
-    sessionHigh := math.max(sessionHigh, high)
-    sessionLow := math.min(sessionLow, low)
+    sessionHigh := math.max(nz(sessionHigh, high), high)
+    sessionLow := math.min(nz(sessionLow, low), low)
 
 // ============================================================================
-// TPO/MARKET PROFILE CALCULATIONS
+// TPO/MARKET PROFILE CALCULATIONS (SIMPLIFIED)
 // ============================================================================
 
-// Price levels for TPO calculation
+// Arrays for price levels and activity
 var array<float> tpoPrices = array.new<float>()
-var array<int> tpoVolumes = array.new<int>()
-var array<int> tpoTimes = array.new<int>()
+var array<int> tpoActivity = array.new<int>()
 
 // Reset arrays at new session
 if isNewSession
     array.clear(tpoPrices)
-    array.clear(tpoVolumes)
-    array.clear(tpoTimes)
+    array.clear(tpoActivity)
 
-// Calculate tick size for the symbol
-tickSize = syminfo.mintick
-
-// Add current bar data to TPO
+// Build TPO on each bar in session
 if isInSession
     priceRange = high - low
-    numTicks = math.max(1, math.round(priceRange / tickSize))
 
-    for i = 0 to int(math.min(numTicks, 100))
-        price = low + (i * tickSize)
+    // Avoid division by zero
+    if priceRange > 0
+        tickSize = syminfo.mintick
+        numLevels = math.min(20, math.max(1, math.round(priceRange / tickSize)))
 
-        if price <= high and price >= low
+        for i = 0 to numLevels - 1
+            price = low + (i * priceRange / numLevels)
+
+            // Find if price level exists
             idx = -1
-
             for j = 0 to array.size(tpoPrices) - 1
-                if math.abs(array.get(tpoPrices, j) - price) < tickSize / 2
+                if math.abs(array.get(tpoPrices, j) - price) < (priceRange / numLevels / 2)
                     idx := j
                     break
 
             if idx >= 0
-                if tpoMethod == "Volume-Weighted"
-                    array.set(tpoVolumes, idx, array.get(tpoVolumes, idx) + int(volume / numTicks))
-                else
-                    array.set(tpoTimes, idx, array.get(tpoTimes, idx) + 1)
-            else
+                // Increment existing level
+                array.set(tpoActivity, idx, array.get(tpoActivity, idx) + 1)
+            else if array.size(tpoPrices) < 100
+                // Add new level
                 array.push(tpoPrices, price)
-                array.push(tpoVolumes, tpoMethod == "Volume-Weighted" ? int(volume / numTicks) : 0)
-                array.push(tpoTimes, tpoMethod == "Time-Based" ? 1 : 0)
+                array.push(tpoActivity, 1)
 
 // Calculate POC, VAH, VAL
 var float poc = na
@@ -272,78 +249,73 @@ var float vah = na
 var float val = na
 
 if isInSession and array.size(tpoPrices) > 0
+    // Find POC (highest activity)
     maxActivity = 0
     pocIndex = 0
 
     for i = 0 to array.size(tpoPrices) - 1
-        activity = tpoMethod == "Volume-Weighted" ? array.get(tpoVolumes, i) : array.get(tpoTimes, i)
-
+        activity = array.get(tpoActivity, i)
         if activity > maxActivity
             maxActivity := activity
             pocIndex := i
 
     poc := array.get(tpoPrices, pocIndex)
 
+    // Calculate total activity
     totalActivity = 0
     for i = 0 to array.size(tpoPrices) - 1
-        totalActivity += tpoMethod == "Volume-Weighted" ? array.get(tpoVolumes, i) : array.get(tpoTimes, i)
+        totalActivity += array.get(tpoActivity, i)
 
+    // Find value area (top 70% of activity)
     targetActivity = totalActivity * (valueAreaPercent / 100)
 
-    // Sort prices by activity to find value area
-    var array<float> sortedPrices = array.new<float>()
-    var array<int> sortedActivity = array.new<int>()
+    // Create sorted copy
+    var array<float> sortedPrices = array.copy(tpoPrices)
+    var array<int> sortedActivity = array.copy(tpoActivity)
 
-    array.clear(sortedPrices)
-    array.clear(sortedActivity)
-
-    for i = 0 to array.size(tpoPrices) - 1
-        array.push(sortedPrices, array.get(tpoPrices, i))
-        array.push(sortedActivity, tpoMethod == "Volume-Weighted" ? array.get(tpoVolumes, i) : array.get(tpoTimes, i))
-
-    // Simple bubble sort by activity
+    // Bubble sort by activity
     n = array.size(sortedActivity)
-    for i = 0 to n - 2
-        for j = 0 to n - i - 2
-            if array.get(sortedActivity, j) < array.get(sortedActivity, j + 1)
-                tempActivity = array.get(sortedActivity, j)
-                tempPrice = array.get(sortedPrices, j)
-                array.set(sortedActivity, j, array.get(sortedActivity, j + 1))
-                array.set(sortedActivity, j + 1, tempActivity)
-                array.set(sortedPrices, j, array.get(sortedPrices, j + 1))
-                array.set(sortedPrices, j + 1, tempPrice)
+    if n > 1
+        for i = 0 to n - 2
+            for j = 0 to n - i - 2
+                if array.get(sortedActivity, j) < array.get(sortedActivity, j + 1)
+                    // Swap activity
+                    tempAct = array.get(sortedActivity, j)
+                    array.set(sortedActivity, j, array.get(sortedActivity, j + 1))
+                    array.set(sortedActivity, j + 1, tempAct)
+                    // Swap prices
+                    tempPrice = array.get(sortedPrices, j)
+                    array.set(sortedPrices, j, array.get(sortedPrices, j + 1))
+                    array.set(sortedPrices, j + 1, tempPrice)
 
-    // Find value area by taking top prices until we hit target
+    // Accumulate until we hit target
     accumulatedActivity = 0
     var array<float> valueAreaPrices = array.new<float>()
     array.clear(valueAreaPrices)
 
     for i = 0 to array.size(sortedActivity) - 1
-        if accumulatedActivity < targetActivity
-            array.push(valueAreaPrices, array.get(sortedPrices, i))
-            accumulatedActivity += array.get(sortedActivity, i)
-        else
+        array.push(valueAreaPrices, array.get(sortedPrices, i))
+        accumulatedActivity += array.get(sortedActivity, i)
+        if accumulatedActivity >= targetActivity
             break
 
     if array.size(valueAreaPrices) > 0
         vah := array.max(valueAreaPrices)
         val := array.min(valueAreaPrices)
 
-// Initial Balance
+// Initial Balance (first hour high/low)
 var float ibHigh = na
 var float ibLow = na
-
-ibPeriodBars = math.round(ibPeriodMinutes / timeframe.multiplier)
 
 if isNewSession
     ibHigh := high
     ibLow := low
-else if isInSession and sessionBarCount <= ibPeriodBars
-    ibHigh := math.max(nz(ibHigh), high)
+else if isInSession and sessionBarCount <= 12  // Approximately first hour on 5-min chart
+    ibHigh := math.max(nz(ibHigh, high), high)
     ibLow := math.min(nz(ibLow, low), low)
 
 // ============================================================================
-// ORDER BLOCK DETECTION
+// ORDER BLOCK DETECTION (FIXED)
 // ============================================================================
 
 // Order Block Type
@@ -354,65 +326,103 @@ type OrderBlock
     bool isBullish
     bool isValid
 
-// Arrays to store order blocks
+// Arrays to store order blocks and boxes
 var array<OrderBlock> orderBlocks = array.new<OrderBlock>()
+var array<box> orderBlockBoxes = array.new<box>()
 
 // Volume check
 avgVolume = ta.sma(volume, 20)
 isHighVolume = requireVolumeConfirmation ? volume > avgVolume : true
 
-// Check for consecutive candles
-consecutiveBullish = 0
-consecutiveBearish = 0
+// Check for consecutive bullish/bearish candles (LOOK BACK, not ahead)
+countConsecutiveBullish() =>
+    count = 0
+    for i = 1 to obSensitivity
+        if close[i] > open[i]
+            count += 1
+        else
+            break
+    count
 
-for i = 0 to obSensitivity - 1
-    if close[i] > open[i]
-        consecutiveBullish += 1
-    if close[i] < open[i]
-        consecutiveBearish += 1
+countConsecutiveBearish() =>
+    count = 0
+    for i = 1 to obSensitivity
+        if close[i] < open[i]
+            count += 1
+        else
+            break
+    count
 
-// Bullish Order Block: Last bearish candle before bullish move
+consecutiveBullish = countConsecutiveBullish()
+consecutiveBearish = countConsecutiveBearish()
+
+// Current candle analysis (FIXED: avoid division by zero)
 isBearishCandle = close < open
-bodyPercent = math.abs(close - open) / (high - low) * 100
+isBullishCandle = close > open
+candleRange = high - low
+bodySize = math.abs(close - open)
+bodyPercent = candleRange > 0 ? (bodySize / candleRange * 100) : 0
 hasValidBody = bodyPercent >= obMinBodyPercent
 
+// Bullish Order Block: Bearish candle BEFORE bullish move
 bullishOBFormed = isBearishCandle and
      hasValidBody and
      isHighVolume and
-     consecutiveBullish >= obSensitivity
+     consecutiveBullish >= obSensitivity and
+     barstate.isconfirmed
 
-// Bearish Order Block: Last bullish candle before bearish move
-isBullishCandle = close > open
-
+// Bearish Order Block: Bullish candle BEFORE bearish move
 bearishOBFormed = isBullishCandle and
      hasValidBody and
      isHighVolume and
-     consecutiveBearish >= obSensitivity
+     consecutiveBearish >= obSensitivity and
+     barstate.isconfirmed
 
 // Add new order blocks
 if bullishOBFormed and isInSession
     newOB = OrderBlock.new(high, low, bar_index, true, true)
     array.push(orderBlocks, newOB)
 
+    // Create box
+    newBox = box.new(bar_index, high, bar_index + 1, low,
+         border_color=color.new(colorBullishOB, 50),
+         bgcolor=colorBullishOB,
+         extend=extend.right)
+    array.push(orderBlockBoxes, newBox)
+
+    // Limit arrays
     if array.size(orderBlocks) > maxOrderBlocks
+        oldBox = array.shift(orderBlockBoxes)
+        box.delete(oldBox)
         array.shift(orderBlocks)
 
 if bearishOBFormed and isInSession
     newOB = OrderBlock.new(high, low, bar_index, false, true)
     array.push(orderBlocks, newOB)
 
+    // Create box
+    newBox = box.new(bar_index, high, bar_index + 1, low,
+         border_color=color.new(colorBearishOB, 50),
+         bgcolor=colorBearishOB,
+         extend=extend.right)
+    array.push(orderBlockBoxes, newBox)
+
+    // Limit arrays
     if array.size(orderBlocks) > maxOrderBlocks
+        oldBox = array.shift(orderBlockBoxes)
+        box.delete(oldBox)
         array.shift(orderBlocks)
 
 // Update order block validity
 for i = 0 to array.size(orderBlocks) - 1
     ob = array.get(orderBlocks, i)
-
     barsActive = bar_index - ob.startBar
 
+    // Invalidate if too old
     if barsActive > obValidityBars
         ob.isValid := false
 
+    // Invalidate if price breaks through
     if ob.isBullish and low < ob.bottom
         ob.isValid := false
 
@@ -420,6 +430,12 @@ for i = 0 to array.size(orderBlocks) - 1
         ob.isValid := false
 
     array.set(orderBlocks, i, ob)
+
+    // Update box visibility
+    if i < array.size(orderBlockBoxes)
+        currentBox = array.get(orderBlockBoxes, i)
+        if not ob.isValid and not na(currentBox)
+            box.delete(currentBox)
 
 // ============================================================================
 // TRADING LOGIC
@@ -458,10 +474,10 @@ atBearishOB = not na(nearestBearishOBBottom) and
      low <= nearestBearishOBTop and
      high >= nearestBearishOBBottom
 
-// Check distance to TPO levels
-distanceToVAL = not na(val) ? math.abs(close - val) / close * 100 : 100.0
-distanceToVAH = not na(vah) ? math.abs(close - vah) / close * 100 : 100.0
-distanceToPOC = not na(poc) ? math.abs(close - poc) / close * 100 : 100.0
+// Check distance to TPO levels (FIXED: avoid division by zero)
+distanceToVAL = not na(val) and close > 0 ? math.abs(close - val) / close * 100 : 100.0
+distanceToVAH = not na(vah) and close > 0 ? math.abs(close - vah) / close * 100 : 100.0
+distanceToPOC = not na(poc) and close > 0 ? math.abs(close - poc) / close * 100 : 100.0
 
 // Long conditions
 nearVAL = distanceToVAL <= minDistanceToTPO
@@ -559,45 +575,32 @@ if useSessionExit and not isInSession and strategy.position_size != 0
 // VISUALIZATION
 // ============================================================================
 
-// Plot TPO Levels
-plot(showVAH and vah ? vah : na, "VAH",
+// Plot TPO Levels (FIXED syntax)
+plot(showVAH and not na(vah) ? vah : na, "VAH",
      color=colorVAH,
      linewidth=2,
      style=plot.style_line)
 
-plot(showVAL and val ? val : na, "VAL",
+plot(showVAL and not na(val) ? val : na, "VAL",
      color=colorVAL,
      linewidth=2,
      style=plot.style_line)
 
-plot(showPOC and poc ? poc : na, "POC",
+plot(showPOC and not na(poc) ? poc : na, "POC",
      color=colorPOC,
      linewidth=3,
      style=plot.style_line)
 
-// Plot Initial Balance
-plot(showInitialBalance and ibHigh ? ibHigh : na, "IB High",
+// Plot Initial Balance (FIXED syntax)
+plot(showInitialBalance and not na(ibHigh) ? ibHigh : na, "IB High",
      color=color.new(color.blue, 70),
      linewidth=1,
      style=plot.style_stepline)
 
-plot(showInitialBalance and ibLow ? ibLow : na, "IB Low",
+plot(showInitialBalance and not na(ibLow) ? ibLow : na, "IB Low",
      color=color.new(color.blue, 70),
      linewidth=1,
      style=plot.style_stepline)
-
-// Draw Order Blocks
-if showOrderBlocks
-    for i = 0 to array.size(orderBlocks) - 1
-        ob = array.get(orderBlocks, i)
-
-        if ob.isValid
-            obColor = ob.isBullish ? colorBullishOB : colorBearishOB
-
-            box.new(ob.startBar, ob.top, bar_index + 1, ob.bottom,
-                 border_color=color.new(obColor, 50),
-                 bgcolor=obColor,
-                 extend=extend.right)
 
 // Entry/Exit Markers
 if showEntryExitMarkers
@@ -615,7 +618,9 @@ if showEntryExitMarkers
 
 // Statistics Table
 if showStatsTable and barstate.islast
-    var table statsTable = table.new(position.top_right, 2, 10, bgcolor=color.new(color.black, 85), border_width=1)
+    var table statsTable = table.new(position.top_right, 2, 10,
+         bgcolor=color.new(color.black, 85),
+         border_width=1)
 
     table.cell(statsTable, 0, 0, "Metric", text_color=color.white, bgcolor=color.new(color.gray, 70))
     table.cell(statsTable, 1, 0, "Value", text_color=color.white, bgcolor=color.new(color.gray, 70))
@@ -658,5 +663,5 @@ if showStatsTable and barstate.islast
 // ALERTS
 // ============================================================================
 
-alertcondition(longCondition and canTrade, "Long Entry Signal", "TPO-OB Long Entry: Price at Bullish Order Block near {{plot_0}}")
-alertcondition(shortCondition and canTrade, "Short Entry Signal", "TPO-OB Short Entry: Price at Bearish Order Block near {{plot_1}}")
+alertcondition(longCondition and canTrade, "Long Entry Signal", "TPO-OB Long Entry: Bullish Order Block + TPO Level")
+alertcondition(shortCondition and canTrade, "Short Entry Signal", "TPO-OB Short Entry: Bearish Order Block + TPO Level")
