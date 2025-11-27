@@ -69,6 +69,16 @@ use_fixed_stop = input.bool(true, 'Enable Fixed Stop-Loss?', group=risk_manageme
 use_max_loss = input.bool(false, 'Enable Max Loss per Day?', group=risk_management_group)
 max_loss_amount = input.float(1000, 'Max Loss Amount ($)', group=risk_management_group)
 
+// --- Profit Target Features ---
+use_per_trade_profit = input.bool(false, 'Enable Per-Trade Profit Target?', group=risk_management_group)
+per_trade_profit_mode = input.string('Fixed Points', 'Profit Target Mode', options=['Fixed Points', 'Percentage', 'Risk:Reward Ratio'], group=risk_management_group)
+per_trade_profit_points = input.float(20.0, 'Profit Target (Points)', minval=0.1, group=risk_management_group, tooltip='For Fixed Points mode')
+per_trade_profit_percent = input.float(2.0, 'Profit Target (%)', minval=0.1, group=risk_management_group, tooltip='For Percentage mode: % of entry price')
+per_trade_rr_ratio = input.float(2.0, 'Risk:Reward Ratio', minval=0.1, group=risk_management_group, tooltip='For R:R mode: Profit = Stop Distance × Ratio')
+
+use_max_profit = input.bool(false, 'Enable Max Profit per Day?', group=risk_management_group, tooltip='Stop taking new trades after hitting daily profit target')
+max_profit_amount = input.float(1000, 'Max Profit Amount ($)', group=risk_management_group)
+
 // --- 4. Limit Order Feature ---
 use_limit_orders = input.bool(false, 'Enable Limit Orders at Entry?', group=limit_order_group, tooltip='Place limit orders at entry price after favorable price movement')
 limit_order_trigger_mode = input.string('Fixed Points', 'Trigger Mode', options=['Fixed Points', 'ATR Multiple'], group=limit_order_group)
@@ -136,13 +146,21 @@ var bool short_limit_order_placed = false
 is_in_no_trade_zone = not na(time(timeframe.period, no_trade_session))
 var session_pnl = 0.0
 var trading_allowed_by_pnl = true
+var trading_allowed_by_profit = true
 is_new_day = dayofmonth != dayofmonth[1]
 if is_new_day
     session_pnl := strategy.netprofit
     trading_allowed_by_pnl := true
+    trading_allowed_by_profit := true
 current_pnl = strategy.netprofit - session_pnl
+
+// Check max loss
 if use_max_loss and current_pnl < -max_loss_amount
     trading_allowed_by_pnl := false
+
+// Check max profit
+if use_max_profit and current_pnl > max_profit_amount
+    trading_allowed_by_profit := false
 
 strong_bullish_confirmation = mtf_conv > mtf_base and mtf_close > mtf_top and mtf_lead1 > mtf_lead2
 strong_bearish_confirmation = mtf_conv < mtf_base and mtf_close < mtf_bottom and mtf_lead1 < mtf_lead2
@@ -229,18 +247,61 @@ if use_limit_orders and strategy.position_size < 0 and not short_limit_order_pla
 if flatten_in_no_trade_zone and is_in_no_trade_zone and strategy.position_size != 0
     strategy.close_all(comment='Flatten: Entered No-Trade Zone')
 
-can_open_trade = barstate.isconfirmed and (use_session_filter ? not is_in_no_trade_zone : true) and trading_allowed_by_pnl and strategy.position_size == 0
+can_open_trade = barstate.isconfirmed and (use_session_filter ? not is_in_no_trade_zone : true) and trading_allowed_by_pnl and trading_allowed_by_profit and strategy.position_size == 0
 if can_open_trade
     if longEntry
         strategy.entry('Long', strategy.long)
     if shortEntry
         strategy.entry('Short', strategy.short)
 
-if strategy.position_size != 0 and use_fixed_stop
+// Calculate profit targets based on mode
+var float long_profit_target = na
+var float short_profit_target = na
+
+if strategy.position_size > 0 and strategy.position_size[1] == 0 and use_per_trade_profit
+    entry_price = strategy.opentrades.entry_price(0)
+    stop_distance = entry_price - (basis - (basis - lower) * 1.5)
+
+    if per_trade_profit_mode == 'Fixed Points'
+        long_profit_target := entry_price + per_trade_profit_points
+    else if per_trade_profit_mode == 'Percentage'
+        long_profit_target := entry_price * (1 + per_trade_profit_percent / 100)
+    else if per_trade_profit_mode == 'Risk:Reward Ratio'
+        long_profit_target := entry_price + (stop_distance * per_trade_rr_ratio)
+
+if strategy.position_size < 0 and strategy.position_size[1] == 0 and use_per_trade_profit
+    entry_price = strategy.opentrades.entry_price(0)
+    stop_distance = (basis + (upper - basis) * 1.5) - entry_price
+
+    if per_trade_profit_mode == 'Fixed Points'
+        short_profit_target := entry_price - per_trade_profit_points
+    else if per_trade_profit_mode == 'Percentage'
+        short_profit_target := entry_price * (1 - per_trade_profit_percent / 100)
+    else if per_trade_profit_mode == 'Risk:Reward Ratio'
+        short_profit_target := entry_price - (stop_distance * per_trade_rr_ratio)
+
+// Reset profit targets when position closes
+if strategy.position_size == 0
+    long_profit_target := na
+    short_profit_target := na
+
+// Apply stop loss and profit targets
+if strategy.position_size != 0
     initial_stop_long = basis - (basis - lower) * 1.5
     initial_stop_short = basis + (upper - basis) * 1.5
-    strategy.exit('Fixed Stop', from_entry='Long', stop=initial_stop_long)
-    strategy.exit('Fixed Stop', from_entry='Short', stop=initial_stop_short)
+
+    if use_fixed_stop and use_per_trade_profit
+        // Both stop and profit target
+        strategy.exit('SL+TP', from_entry='Long', stop=initial_stop_long, limit=long_profit_target)
+        strategy.exit('SL+TP', from_entry='Short', stop=initial_stop_short, limit=short_profit_target)
+    else if use_fixed_stop
+        // Stop loss only
+        strategy.exit('Fixed Stop', from_entry='Long', stop=initial_stop_long)
+        strategy.exit('Fixed Stop', from_entry='Short', stop=initial_stop_short)
+    else if use_per_trade_profit
+        // Profit target only
+        strategy.exit('Take Profit', from_entry='Long', limit=long_profit_target)
+        strategy.exit('Take Profit', from_entry='Short', limit=short_profit_target)
 
 if exitSignal and strategy.position_size != 0
     strategy.close_all(comment='Exited: Entered Ichimoku Cloud')
@@ -275,3 +336,14 @@ plot(use_limit_orders and not na(long_entry_price) and strategy.position_size > 
 plot(use_limit_orders and not na(short_entry_price) and strategy.position_size < 0 and not short_limit_order_placed ?
      short_entry_price - trigger_threshold : na,
      'Short Trigger Level', color=color.new(color.maroon, 50), style=plot.style_linebr, linewidth=1)
+
+// Plot profit targets
+plot(use_per_trade_profit and not na(long_profit_target) and strategy.position_size > 0 ? long_profit_target : na,
+     'Long Profit Target', color=color.new(color.lime, 0), style=plot.style_cross, linewidth=3)
+plot(use_per_trade_profit and not na(short_profit_target) and strategy.position_size < 0 ? short_profit_target : na,
+     'Short Profit Target', color=color.new(color.orange, 0), style=plot.style_cross, linewidth=3)
+
+// Display current session P&L and status in data window
+plotchar(current_pnl, 'Daily P&L', '', location.top)
+plotchar(trading_allowed_by_pnl ? 1 : 0, 'Trading Allowed (Loss)', '', location.top)
+plotchar(trading_allowed_by_profit ? 1 : 0, 'Trading Allowed (Profit)', '', location.top)
