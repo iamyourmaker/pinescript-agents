@@ -86,6 +86,19 @@ max_loss_per_trade_calc = input.string('Fixed Amount', 'Loss Calculation', optio
 max_loss_per_trade_amount = input.float(100.0, 'Max Loss Amount ($)', minval=0.1, group=risk_management_group, tooltip='For Fixed Amount mode')
 max_loss_per_trade_percent = input.float(1.0, 'Max Loss (%)', minval=0.1, group=risk_management_group, tooltip='For Percentage mode: % of entry price')
 
+// --- Trailing Stop Feature ---
+use_trailing_stop = input.bool(false, 'Enable Trailing Stop After Profit Target?', group=risk_management_group, tooltip='Activates trailing stop only after profit target is reached')
+trailing_stop_mode = input.string('Fixed Points', 'Trailing Stop Mode', options=['Fixed Points', 'ATR Multiple'], group=risk_management_group)
+trailing_stop_points = input.float(10.0, 'Trailing Stop Distance (Points)', minval=0.1, group=risk_management_group, tooltip='For Fixed Points mode')
+trailing_stop_atr_mult = input.float(1.5, 'Trailing Stop ATR Multiple', minval=0.1, group=risk_management_group, tooltip='For ATR mode: trail by X × ATR')
+trailing_stop_atr_len = input.int(14, 'Trailing Stop ATR Length', minval=1, group=risk_management_group)
+
+// --- Dashboard Display ---
+dashboard_group = 'Dashboard Settings'
+show_dashboard = input.bool(true, 'Show Dashboard?', group=dashboard_group)
+dashboard_position = input.string('Top Right', 'Dashboard Position', options=['Top Left', 'Top Right', 'Bottom Left', 'Bottom Right'], group=dashboard_group)
+dashboard_size = input.string('Normal', 'Dashboard Size', options=['Small', 'Normal', 'Large'], group=dashboard_group)
+
 // --- 4. Limit Order Feature ---
 use_limit_orders = input.bool(false, 'Enable Limit Orders at Entry?', group=limit_order_group, tooltip='Place limit orders at entry price after favorable price movement')
 limit_order_trigger_mode = input.string('Fixed Points', 'Trigger Mode', options=['Fixed Points', 'ATR Multiple'], group=limit_order_group)
@@ -137,6 +150,9 @@ obv_ma = obv_ma_type == 'SMA' ? ta.sma(mtf_obv, obv_ma_len) : ta.ema(mtf_obv, ob
 // ATR for limit order trigger
 atr_value = ta.atr(limit_order_atr_len)
 
+// ATR for trailing stop
+trailing_atr = ta.atr(trailing_stop_atr_len)
+
 // =================================================================================
 // === Limit Order Tracking Variables ===
 // =================================================================================
@@ -145,6 +161,15 @@ var float long_entry_price = na
 var float short_entry_price = na
 var bool long_limit_order_placed = false
 var bool short_limit_order_placed = false
+
+// =================================================================================
+// === Trailing Stop Tracking Variables ===
+// =================================================================================
+
+var bool trailing_stop_active = false
+var float trailing_stop_level = na
+var float highest_price_since_profit = na
+var float lowest_price_since_profit = na
 
 // =================================================================================
 // === Filter Logic ===
@@ -275,6 +300,63 @@ if use_max_loss_per_trade and strategy.position_size != 0
         if max_loss_per_trade_mode == 'Exit Trade & Halt Trading'
             trading_halted_by_trade_loss := true
 
+// Trailing Stop Logic (activates after profit target is hit)
+if use_trailing_stop and use_per_trade_profit and strategy.position_size != 0
+    entry_price = strategy.opentrades.entry_price(0)
+    current_pnl_trade = strategy.openprofit
+
+    // Calculate trailing distance
+    trailing_distance = trailing_stop_mode == 'Fixed Points' ? trailing_stop_points : trailing_atr * trailing_stop_atr_mult
+
+    // For LONG positions
+    if strategy.position_size > 0
+        // Check if profit target has been reached (activate trailing stop)
+        if not trailing_stop_active and not na(long_profit_target)
+            if close >= long_profit_target
+                trailing_stop_active := true
+                highest_price_since_profit := high
+                trailing_stop_level := high - trailing_distance
+
+        // If trailing stop is active, update it
+        if trailing_stop_active
+            // Update highest price
+            if high > highest_price_since_profit
+                highest_price_since_profit := high
+                trailing_stop_level := highest_price_since_profit - trailing_distance
+
+            // Check if price hit trailing stop
+            if low <= trailing_stop_level
+                strategy.close_all(comment='Trailing Stop Hit')
+                trailing_stop_active := false
+
+    // For SHORT positions
+    if strategy.position_size < 0
+        // Check if profit target has been reached (activate trailing stop)
+        if not trailing_stop_active and not na(short_profit_target)
+            if close <= short_profit_target
+                trailing_stop_active := true
+                lowest_price_since_profit := low
+                trailing_stop_level := low + trailing_distance
+
+        // If trailing stop is active, update it
+        if trailing_stop_active
+            // Update lowest price
+            if low < lowest_price_since_profit
+                lowest_price_since_profit := low
+                trailing_stop_level := lowest_price_since_profit + trailing_distance
+
+            // Check if price hit trailing stop
+            if high >= trailing_stop_level
+                strategy.close_all(comment='Trailing Stop Hit')
+                trailing_stop_active := false
+
+// Reset trailing stop when position closes
+if strategy.position_size == 0 and trailing_stop_active
+    trailing_stop_active := false
+    trailing_stop_level := na
+    highest_price_since_profit := na
+    lowest_price_since_profit := na
+
 can_open_trade = barstate.isconfirmed and (use_session_filter ? not is_in_no_trade_zone : true) and trading_allowed_by_pnl and trading_allowed_by_profit and not trading_halted_by_trade_loss and strategy.position_size == 0
 if can_open_trade
     if longEntry
@@ -403,9 +485,116 @@ plot(use_max_loss_per_trade and not na(long_max_loss_level) and strategy.positio
 plot(use_max_loss_per_trade and not na(short_max_loss_level) and strategy.position_size < 0 ? short_max_loss_level : na,
      'Short Max Loss Level', color=color.new(color.red, 0), style=plot.style_stepline, linewidth=2)
 
+// Plot trailing stop level
+plot(use_trailing_stop and trailing_stop_active ? trailing_stop_level : na,
+     'Trailing Stop', color=color.new(color.blue, 0), style=plot.style_linebr, linewidth=3)
+
 // Display current session P&L and status in data window
 plotchar(current_pnl, 'Daily P&L', '', location.top)
 plotchar(trading_allowed_by_pnl ? 1 : 0, 'Trading Allowed (Loss)', '', location.top)
 plotchar(trading_allowed_by_profit ? 1 : 0, 'Trading Allowed (Profit)', '', location.top)
 plotchar(trading_halted_by_trade_loss ? 0 : 1, 'Trading Allowed (Trade Loss)', '', location.top)
 plotchar(strategy.openprofit, 'Current Trade P&L', '', location.top)
+plotchar(trailing_stop_active ? 1 : 0, 'Trailing Stop Active', '', location.top)
+
+// =================================================================================
+// === Dashboard Overlay ===
+// =================================================================================
+
+if show_dashboard
+    // Determine table position
+    table_position = dashboard_position == 'Top Left' ? position.top_left :
+                     dashboard_position == 'Top Right' ? position.top_right :
+                     dashboard_position == 'Bottom Left' ? position.bottom_left :
+                     position.bottom_right
+
+    // Determine table size
+    table_text_size = dashboard_size == 'Small' ? size.small :
+                      dashboard_size == 'Normal' ? size.normal :
+                      size.large
+
+    // Create dashboard table
+    var table dashboard = table.new(table_position, 2, 14, border_width=2, border_color=color.gray, frame_color=color.gray, frame_width=2)
+
+    // Header
+    table.cell(dashboard, 0, 0, 'BOLOKU PRO Dashboard', text_color=color.white, bgcolor=color.new(color.blue, 20), text_size=table_text_size, text_halign=text.align_center)
+    table.merge_cells(dashboard, 0, 0, 1, 0)
+
+    // Position Info
+    table.cell(dashboard, 0, 1, 'Position:', text_color=color.gray, bgcolor=color.new(color.black, 80), text_size=table_text_size)
+    position_text = strategy.position_size > 0 ? 'LONG' : strategy.position_size < 0 ? 'SHORT' : 'FLAT'
+    position_color = strategy.position_size > 0 ? color.green : strategy.position_size < 0 ? color.red : color.gray
+    table.cell(dashboard, 1, 1, position_text, text_color=position_color, bgcolor=color.new(color.black, 80), text_size=table_text_size, text_halign=text.align_right)
+
+    // Entry Price
+    table.cell(dashboard, 0, 2, 'Entry:', text_color=color.gray, bgcolor=color.new(color.black, 90), text_size=table_text_size)
+    entry_text = strategy.position_size != 0 ? str.tostring(strategy.opentrades.entry_price(0), '#.##') : '--'
+    table.cell(dashboard, 1, 2, entry_text, text_color=color.white, bgcolor=color.new(color.black, 90), text_size=table_text_size, text_halign=text.align_right)
+
+    // Current Trade P&L
+    table.cell(dashboard, 0, 3, 'Trade P&L:', text_color=color.gray, bgcolor=color.new(color.black, 80), text_size=table_text_size)
+    trade_pnl_text = strategy.position_size != 0 ? str.tostring(strategy.openprofit, '$#.##') : '--'
+    trade_pnl_color = strategy.openprofit > 0 ? color.green : strategy.openprofit < 0 ? color.red : color.gray
+    table.cell(dashboard, 1, 3, trade_pnl_text, text_color=trade_pnl_color, bgcolor=color.new(color.black, 80), text_size=table_text_size, text_halign=text.align_right)
+
+    // Daily P&L
+    table.cell(dashboard, 0, 4, 'Daily P&L:', text_color=color.gray, bgcolor=color.new(color.black, 90), text_size=table_text_size)
+    daily_pnl_text = str.tostring(current_pnl, '$#.##')
+    daily_pnl_color = current_pnl > 0 ? color.green : current_pnl < 0 ? color.red : color.gray
+    table.cell(dashboard, 1, 4, daily_pnl_text, text_color=daily_pnl_color, bgcolor=color.new(color.black, 90), text_size=table_text_size, text_halign=text.align_right)
+
+    // Separator
+    table.cell(dashboard, 0, 5, '───────────', text_color=color.gray, bgcolor=color.new(color.black, 80), text_size=table_text_size)
+    table.merge_cells(dashboard, 0, 5, 1, 5)
+
+    // Profit Target
+    table.cell(dashboard, 0, 6, 'Profit Target:', text_color=color.gray, bgcolor=color.new(color.black, 90), text_size=table_text_size)
+    pt_text = use_per_trade_profit and strategy.position_size > 0 and not na(long_profit_target) ? str.tostring(long_profit_target, '#.##') :
+              use_per_trade_profit and strategy.position_size < 0 and not na(short_profit_target) ? str.tostring(short_profit_target, '#.##') :
+              use_per_trade_profit ? 'Enabled' : 'Off'
+    table.cell(dashboard, 1, 6, pt_text, text_color=color.lime, bgcolor=color.new(color.black, 90), text_size=table_text_size, text_halign=text.align_right)
+
+    // Trailing Stop
+    table.cell(dashboard, 0, 7, 'Trailing Stop:', text_color=color.gray, bgcolor=color.new(color.black, 80), text_size=table_text_size)
+    ts_text = use_trailing_stop and trailing_stop_active and not na(trailing_stop_level) ? str.tostring(trailing_stop_level, '#.##') :
+              use_trailing_stop ? 'Armed' : 'Off'
+    ts_color = trailing_stop_active ? color.aqua : use_trailing_stop ? color.yellow : color.gray
+    table.cell(dashboard, 1, 7, ts_text, text_color=ts_color, bgcolor=color.new(color.black, 80), text_size=table_text_size, text_halign=text.align_right)
+
+    // Max Loss/Trade
+    table.cell(dashboard, 0, 8, 'Max Loss/Trade:', text_color=color.gray, bgcolor=color.new(color.black, 90), text_size=table_text_size)
+    mlt_text = use_max_loss_per_trade ? (max_loss_per_trade_calc == 'Fixed Amount' ? '$' + str.tostring(max_loss_per_trade_amount) : str.tostring(max_loss_per_trade_percent) + '%') : 'Off'
+    table.cell(dashboard, 1, 8, mlt_text, text_color=color.orange, bgcolor=color.new(color.black, 90), text_size=table_text_size, text_halign=text.align_right)
+
+    // Max Daily Loss
+    table.cell(dashboard, 0, 9, 'Max Daily Loss:', text_color=color.gray, bgcolor=color.new(color.black, 80), text_size=table_text_size)
+    mdl_text = use_max_loss ? '$' + str.tostring(max_loss_amount) : 'Off'
+    mdl_color = use_max_loss and not trading_allowed_by_pnl ? color.red : color.orange
+    table.cell(dashboard, 1, 9, mdl_text, text_color=mdl_color, bgcolor=color.new(color.black, 80), text_size=table_text_size, text_halign=text.align_right)
+
+    // Max Daily Profit
+    table.cell(dashboard, 0, 10, 'Max Daily Profit:', text_color=color.gray, bgcolor=color.new(color.black, 90), text_size=table_text_size)
+    mdp_text = use_max_profit ? '$' + str.tostring(max_profit_amount) : 'Off'
+    mdp_color = use_max_profit and not trading_allowed_by_profit ? color.lime : color.green
+    table.cell(dashboard, 1, 10, mdp_text, text_color=mdp_color, bgcolor=color.new(color.black, 90), text_size=table_text_size, text_halign=text.align_right)
+
+    // Separator
+    table.cell(dashboard, 0, 11, '───────────', text_color=color.gray, bgcolor=color.new(color.black, 80), text_size=table_text_size)
+    table.merge_cells(dashboard, 0, 11, 1, 11)
+
+    // Trading Status
+    table.cell(dashboard, 0, 12, 'Trading Status:', text_color=color.gray, bgcolor=color.new(color.black, 90), text_size=table_text_size)
+    status_text = not trading_allowed_by_pnl ? 'HALTED (Loss)' :
+                  not trading_allowed_by_profit ? 'HALTED (Profit)' :
+                  trading_halted_by_trade_loss ? 'HALTED (Trade)' :
+                  is_in_no_trade_zone ? 'NO-TRADE ZONE' : 'ACTIVE'
+    status_color = not trading_allowed_by_pnl or trading_halted_by_trade_loss ? color.red :
+                   not trading_allowed_by_profit ? color.lime :
+                   is_in_no_trade_zone ? color.yellow : color.green
+    table.cell(dashboard, 1, 12, status_text, text_color=status_color, bgcolor=color.new(color.black, 90), text_size=table_text_size, text_halign=text.align_right)
+
+    // Total Net Profit
+    table.cell(dashboard, 0, 13, 'Total Net:', text_color=color.gray, bgcolor=color.new(color.black, 80), text_size=table_text_size)
+    total_pnl_text = str.tostring(strategy.netprofit, '$#.##')
+    total_pnl_color = strategy.netprofit > 0 ? color.green : strategy.netprofit < 0 ? color.red : color.gray
+    table.cell(dashboard, 1, 13, total_pnl_text, text_color=total_pnl_color, bgcolor=color.new(color.black, 80), text_size=table_text_size, text_halign=text.align_right)
