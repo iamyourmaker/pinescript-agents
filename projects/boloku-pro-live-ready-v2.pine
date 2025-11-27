@@ -275,6 +275,41 @@ if use_limit_orders and strategy.position_size < 0 and not short_limit_order_pla
         short_limit_order_placed := true
 
 // =================================================================================
+// === Profit Target Calculation ===
+// =================================================================================
+
+// Calculate profit targets based on mode
+var float long_profit_target = na
+var float short_profit_target = na
+
+if strategy.position_size > 0 and strategy.position_size[1] == 0 and use_per_trade_profit
+    entry_price = strategy.opentrades.entry_price(0)
+    stop_distance = entry_price - (basis - (basis - lower) * 1.5)
+
+    if per_trade_profit_mode == 'Fixed Points'
+        long_profit_target := entry_price + per_trade_profit_points
+    else if per_trade_profit_mode == 'Percentage'
+        long_profit_target := entry_price * (1 + per_trade_profit_percent / 100)
+    else if per_trade_profit_mode == 'Risk:Reward Ratio'
+        long_profit_target := entry_price + (stop_distance * per_trade_rr_ratio)
+
+if strategy.position_size < 0 and strategy.position_size[1] == 0 and use_per_trade_profit
+    entry_price = strategy.opentrades.entry_price(0)
+    stop_distance = (basis + (upper - basis) * 1.5) - entry_price
+
+    if per_trade_profit_mode == 'Fixed Points'
+        short_profit_target := entry_price - per_trade_profit_points
+    else if per_trade_profit_mode == 'Percentage'
+        short_profit_target := entry_price * (1 - per_trade_profit_percent / 100)
+    else if per_trade_profit_mode == 'Risk:Reward Ratio'
+        short_profit_target := entry_price - (stop_distance * per_trade_rr_ratio)
+
+// Reset profit targets when position closes
+if strategy.position_size == 0
+    long_profit_target := na
+    short_profit_target := na
+
+// =================================================================================
 // === Strategy Execution ===
 // =================================================================================
 
@@ -363,37 +398,6 @@ if can_open_trade
         strategy.entry('Long', strategy.long)
     if shortEntry
         strategy.entry('Short', strategy.short)
-
-// Calculate profit targets based on mode
-var float long_profit_target = na
-var float short_profit_target = na
-
-if strategy.position_size > 0 and strategy.position_size[1] == 0 and use_per_trade_profit
-    entry_price = strategy.opentrades.entry_price(0)
-    stop_distance = entry_price - (basis - (basis - lower) * 1.5)
-
-    if per_trade_profit_mode == 'Fixed Points'
-        long_profit_target := entry_price + per_trade_profit_points
-    else if per_trade_profit_mode == 'Percentage'
-        long_profit_target := entry_price * (1 + per_trade_profit_percent / 100)
-    else if per_trade_profit_mode == 'Risk:Reward Ratio'
-        long_profit_target := entry_price + (stop_distance * per_trade_rr_ratio)
-
-if strategy.position_size < 0 and strategy.position_size[1] == 0 and use_per_trade_profit
-    entry_price = strategy.opentrades.entry_price(0)
-    stop_distance = (basis + (upper - basis) * 1.5) - entry_price
-
-    if per_trade_profit_mode == 'Fixed Points'
-        short_profit_target := entry_price - per_trade_profit_points
-    else if per_trade_profit_mode == 'Percentage'
-        short_profit_target := entry_price * (1 - per_trade_profit_percent / 100)
-    else if per_trade_profit_mode == 'Risk:Reward Ratio'
-        short_profit_target := entry_price - (stop_distance * per_trade_rr_ratio)
-
-// Reset profit targets when position closes
-if strategy.position_size == 0
-    long_profit_target := na
-    short_profit_target := na
 
 // Apply stop loss and profit targets
 if strategy.position_size != 0
