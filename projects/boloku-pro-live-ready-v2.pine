@@ -79,6 +79,13 @@ per_trade_rr_ratio = input.float(2.0, 'Risk:Reward Ratio', minval=0.1, group=ris
 use_max_profit = input.bool(false, 'Enable Max Profit per Day?', group=risk_management_group, tooltip='Stop taking new trades after hitting daily profit target')
 max_profit_amount = input.float(1000, 'Max Profit Amount ($)', group=risk_management_group)
 
+// --- Max Loss Per Trade Feature ---
+use_max_loss_per_trade = input.bool(false, 'Enable Max Loss Per Trade?', group=risk_management_group, tooltip='Limit loss on individual trades')
+max_loss_per_trade_mode = input.string('Exit Trade Only', 'Action When Max Loss Hit', options=['Exit Trade Only', 'Exit Trade & Halt Trading'], group=risk_management_group, tooltip='Exit Trade Only: closes the trade. Halt Trading: closes trade and stops all trading for the day')
+max_loss_per_trade_calc = input.string('Fixed Amount', 'Loss Calculation', options=['Fixed Amount', 'Percentage of Entry'], group=risk_management_group)
+max_loss_per_trade_amount = input.float(100.0, 'Max Loss Amount ($)', minval=0.1, group=risk_management_group, tooltip='For Fixed Amount mode')
+max_loss_per_trade_percent = input.float(1.0, 'Max Loss (%)', minval=0.1, group=risk_management_group, tooltip='For Percentage mode: % of entry price')
+
 // --- 4. Limit Order Feature ---
 use_limit_orders = input.bool(false, 'Enable Limit Orders at Entry?', group=limit_order_group, tooltip='Place limit orders at entry price after favorable price movement')
 limit_order_trigger_mode = input.string('Fixed Points', 'Trigger Mode', options=['Fixed Points', 'ATR Multiple'], group=limit_order_group)
@@ -147,11 +154,13 @@ is_in_no_trade_zone = not na(time(timeframe.period, no_trade_session))
 var session_pnl = 0.0
 var trading_allowed_by_pnl = true
 var trading_allowed_by_profit = true
+var trading_halted_by_trade_loss = false
 is_new_day = dayofmonth != dayofmonth[1]
 if is_new_day
     session_pnl := strategy.netprofit
     trading_allowed_by_pnl := true
     trading_allowed_by_profit := true
+    trading_halted_by_trade_loss := false
 current_pnl = strategy.netprofit - session_pnl
 
 // Check max loss
@@ -247,7 +256,26 @@ if use_limit_orders and strategy.position_size < 0 and not short_limit_order_pla
 if flatten_in_no_trade_zone and is_in_no_trade_zone and strategy.position_size != 0
     strategy.close_all(comment='Flatten: Entered No-Trade Zone')
 
-can_open_trade = barstate.isconfirmed and (use_session_filter ? not is_in_no_trade_zone : true) and trading_allowed_by_pnl and trading_allowed_by_profit and strategy.position_size == 0
+// Check max loss per trade
+if use_max_loss_per_trade and strategy.position_size != 0
+    // Get current trade P&L
+    trade_pnl = strategy.openprofit
+
+    // Calculate max loss threshold based on mode
+    entry_price = strategy.opentrades.entry_price(0)
+    max_loss_threshold = max_loss_per_trade_calc == 'Fixed Amount' ?
+                         -max_loss_per_trade_amount :
+                         -(entry_price * math.abs(strategy.position_size) * max_loss_per_trade_percent / 100)
+
+    // Check if current trade has exceeded max loss
+    if trade_pnl <= max_loss_threshold
+        strategy.close_all(comment='Max Loss Per Trade Hit')
+
+        // If halt mode is enabled, stop trading for the day
+        if max_loss_per_trade_mode == 'Exit Trade & Halt Trading'
+            trading_halted_by_trade_loss := true
+
+can_open_trade = barstate.isconfirmed and (use_session_filter ? not is_in_no_trade_zone : true) and trading_allowed_by_pnl and trading_allowed_by_profit and not trading_halted_by_trade_loss and strategy.position_size == 0
 if can_open_trade
     if longEntry
         strategy.entry('Long', strategy.long)
@@ -343,7 +371,41 @@ plot(use_per_trade_profit and not na(long_profit_target) and strategy.position_s
 plot(use_per_trade_profit and not na(short_profit_target) and strategy.position_size < 0 ? short_profit_target : na,
      'Short Profit Target', color=color.new(color.orange, 0), style=plot.style_cross, linewidth=3)
 
+// Plot max loss per trade levels
+var float long_max_loss_level = na
+var float short_max_loss_level = na
+
+if use_max_loss_per_trade and strategy.position_size > 0 and strategy.position_size[1] == 0
+    entry = strategy.opentrades.entry_price(0)
+    if max_loss_per_trade_calc == 'Fixed Amount'
+        // Calculate price level for fixed dollar loss
+        long_max_loss_level := entry - (max_loss_per_trade_amount / math.abs(strategy.position_size))
+    else
+        // Calculate price level for percentage loss
+        long_max_loss_level := entry * (1 - max_loss_per_trade_percent / 100)
+
+if use_max_loss_per_trade and strategy.position_size < 0 and strategy.position_size[1] == 0
+    entry = strategy.opentrades.entry_price(0)
+    if max_loss_per_trade_calc == 'Fixed Amount'
+        // Calculate price level for fixed dollar loss
+        short_max_loss_level := entry + (max_loss_per_trade_amount / math.abs(strategy.position_size))
+    else
+        // Calculate price level for percentage loss
+        short_max_loss_level := entry * (1 + max_loss_per_trade_percent / 100)
+
+// Reset levels when position closes
+if strategy.position_size == 0
+    long_max_loss_level := na
+    short_max_loss_level := na
+
+plot(use_max_loss_per_trade and not na(long_max_loss_level) and strategy.position_size > 0 ? long_max_loss_level : na,
+     'Long Max Loss Level', color=color.new(color.red, 0), style=plot.style_stepline, linewidth=2)
+plot(use_max_loss_per_trade and not na(short_max_loss_level) and strategy.position_size < 0 ? short_max_loss_level : na,
+     'Short Max Loss Level', color=color.new(color.red, 0), style=plot.style_stepline, linewidth=2)
+
 // Display current session P&L and status in data window
 plotchar(current_pnl, 'Daily P&L', '', location.top)
 plotchar(trading_allowed_by_pnl ? 1 : 0, 'Trading Allowed (Loss)', '', location.top)
 plotchar(trading_allowed_by_profit ? 1 : 0, 'Trading Allowed (Profit)', '', location.top)
+plotchar(trading_halted_by_trade_loss ? 0 : 1, 'Trading Allowed (Trade Loss)', '', location.top)
+plotchar(strategy.openprofit, 'Current Trade P&L', '', location.top)
