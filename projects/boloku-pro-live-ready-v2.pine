@@ -1,0 +1,277 @@
+//@version=6
+//© 🤴🏾 Moshood Adejare
+strategy('BOLOKU PRO (Live Ready V2)', overlay=true, default_qty_type=strategy.percent_of_equity, default_qty_value=1, pyramiding=0, commission_value=0.02, slippage=2, max_bars_back=2000)
+
+// === Inputs ===
+// --- Base Indicators ---
+bb_group = 'Bollinger Bands'
+ichimoku_group = 'Ichimoku Settings'
+source = close
+length = input.int(20, title='BB Length', group=bb_group)
+mult = input.float(2.0, title='BB Multiplier', minval=0.1, maxval=5.0, group=bb_group)
+cloud_tf = input.timeframe('25', title='Ichimoku Cloud Timeframe', group=ichimoku_group)
+conversionPeriods = input.int(9, minval=1, title='Tenkan-sen', group=ichimoku_group)
+basePeriods = input.int(26, minval=1, title='Kijun-sen', group=ichimoku_group)
+spanPeriods = input.int(52, minval=1, title='Senkou Span B', group=ichimoku_group)
+displacement = input.int(26, minval=1, title='Displacement', group=ichimoku_group)
+
+// =================================================================================
+// === Filters and Risk Management ===
+// =================================================================================
+ichimoku_filter_group = 'Core Confirmation Filters'
+adv_filter_group = 'Advanced Entry Filters'
+session_filter_group = 'Session Filter'
+risk_management_group = 'Risk Management'
+limit_order_group = 'Limit Order Feature'
+
+// --- 1. Core Confirmation Filters ---
+use_ichimoku_confirmation = input.bool(true, 'Enable Ichimoku Confirmation Engine?', group=ichimoku_filter_group)
+use_macd_filter = input.bool(true, 'Enable MTF MACD Filter?', group=ichimoku_filter_group)
+macd_tf = input.timeframe('25', 'MACD Timeframe', group=ichimoku_filter_group)
+macd_fast_len = input.int(12, 'MACD Fast', group=ichimoku_filter_group)
+macd_slow_len = input.int(26, 'MACD Slow', group=ichimoku_filter_group)
+macd_signal_len = input.int(9, 'MACD Signal', group=ichimoku_filter_group)
+
+// --- 2. Advanced Entry Filters ---
+use_cmf_filter = input.bool(false, 'Enable MTF Volume Filter: CMF?', group=adv_filter_group)
+cmf_tf = input.timeframe('25', 'CMF Timeframe', group=adv_filter_group)
+cmf_len = input.int(20, 'CMF Length', group=adv_filter_group)
+cmf_long_level = input.float(0.05, '  Long Entry: CMF is greater than', group=adv_filter_group)
+cmf_short_level = input.float(-0.05, '  Short Entry: CMF is less than', group=adv_filter_group)
+
+use_obv_filter = input.bool(false, 'Enable MTF Volume Trend: OBV?', group=adv_filter_group)
+obv_tf = input.timeframe('25', 'OBV Timeframe', group=adv_filter_group)
+obv_ma_type = input.string('SMA', '  OBV MA Type', options=['SMA', 'EMA'], group=adv_filter_group)
+obv_ma_len = input.int(20, '  OBV MA Length', group=adv_filter_group)
+
+use_cvd_filter = input.bool(false, 'Enable MTF CVD (Proxy) Filter?', group=adv_filter_group, tooltip='This is a proxy for CVD based on Up/Down Volume.')
+cvd_tf = input.timeframe('25', 'CVD Timeframe', group=adv_filter_group)
+cvd_len = input.int(14, 'CVD Length', group=adv_filter_group)
+
+use_rsi_filter = input.bool(false, 'Enable MTF RSI Filter?', group=adv_filter_group)
+rsi_tf = input.timeframe('25', 'RSI Timeframe', group=adv_filter_group)
+rsi_len = input.int(14, 'RSI Length', group=adv_filter_group)
+rsi_long_level = input.int(30, '  Long Entry: RSI is greater than', group=adv_filter_group)
+rsi_short_level = input.int(70, '  Short Entry: RSI is less than', group=adv_filter_group)
+
+use_rejection_filter = input.bool(false, 'Enable Price Rejection Candle Filter?', group=adv_filter_group)
+rejection_candle_strength = input.float(50.0, '  Minimum Candle Strength %', group=adv_filter_group, tooltip='For longs, candle must close in the top X% of its range. For shorts, the bottom X%.')
+
+use_bb_volatility_filter = input.bool(false, 'Enable BB Volatility Position Filter?', group=adv_filter_group, tooltip='This REPLACES the standard BB crossover entry.')
+bb_long_level = input.float(0.05, '  Long Entry: %B is less than', group=adv_filter_group)
+bb_short_level = input.float(0.95, '  Short Entry: %B is greater than', group=adv_filter_group)
+
+// --- 3. Session & Risk ---
+use_session_filter = input.bool(true, 'Enable Session Filter?', group=session_filter_group)
+no_trade_session = input.session('0830-1030', 'No-Trade Zone', group=session_filter_group)
+flatten_in_no_trade_zone = input.bool(true, 'Flatten Position in No-Trade Zone?', group=session_filter_group)
+use_fixed_stop = input.bool(true, 'Enable Fixed Stop-Loss?', group=risk_management_group)
+use_max_loss = input.bool(false, 'Enable Max Loss per Day?', group=risk_management_group)
+max_loss_amount = input.float(1000, 'Max Loss Amount ($)', group=risk_management_group)
+
+// --- 4. Limit Order Feature ---
+use_limit_orders = input.bool(false, 'Enable Limit Orders at Entry?', group=limit_order_group, tooltip='Place limit orders at entry price after favorable price movement')
+limit_order_trigger_mode = input.string('Fixed Points', 'Trigger Mode', options=['Fixed Points', 'ATR Multiple'], group=limit_order_group)
+limit_order_points = input.float(10.0, 'Points to Run Before Limit Order', minval=0.1, group=limit_order_group, tooltip='For Fixed Points mode: Number of points price must move favorably')
+limit_order_atr_mult = input.float(1.0, 'ATR Multiple for Trigger', minval=0.1, group=limit_order_group, tooltip='For ATR Multiple mode: Multiple of ATR price must move')
+limit_order_atr_len = input.int(14, 'ATR Length', minval=1, group=limit_order_group)
+limit_order_qty_percent = input.float(50.0, 'Limit Order Size (% of Position)', minval=1.0, maxval=100.0, group=limit_order_group, tooltip='Percentage of position size for the limit order')
+
+// =================================================================================
+// === Calculations & Custom Functions ===
+// =================================================================================
+
+f_cmf(len) =>
+    mfm = (close - low - (high - close)) / (high - low == 0 ? 1 : high - low)
+    mfv = mfm * volume
+    cmf = math.sum(mfv, len) / math.sum(volume, len)
+    cmf
+
+f_cvd(len) =>
+    upVol = high == low ? 0 : volume * (close - low) / (high - low)
+    dnVol = high == low ? 0 : volume * (high - close) / (high - low)
+    cvd = ta.sma(upVol - dnVol, len)
+    cvd
+
+donchian(len) =>
+    math.avg(ta.lowest(len), ta.highest(len))
+conversionLine = donchian(conversionPeriods)
+baseLine = donchian(basePeriods)
+leadLine1 = math.avg(conversionLine, baseLine)
+leadLine2 = donchian(spanPeriods)
+// CORRECTED: Switched to lookahead=off for reliable, non-repainting live signals
+[mtf_conv, mtf_base, mtf_lead1, mtf_lead2, mtf_close] = request.security(syminfo.tickerid, cloud_tf, [conversionLine, baseLine, leadLine1, leadLine2, close], lookahead=barmerge.lookahead_off)
+mtf_top = math.max(mtf_lead1, mtf_lead2)
+mtf_bottom = math.min(mtf_lead1, mtf_lead2)
+basis = ta.sma(source, length)
+dev = mult * ta.stdev(source, length)
+upper = basis + dev
+lower = basis - dev
+percentB = (source - lower) / (upper - lower)
+
+[macdLine, signalLine, _] = ta.macd(close, macd_fast_len, macd_slow_len, macd_signal_len)
+[mtf_macd, mtf_signal] = request.security(syminfo.tickerid, macd_tf, [macdLine, signalLine], lookahead=barmerge.lookahead_off)
+mtf_cmf = request.security(syminfo.tickerid, cmf_tf, f_cmf(cmf_len), lookahead=barmerge.lookahead_off)
+mtf_rsi = request.security(syminfo.tickerid, rsi_tf, ta.rsi(close, rsi_len), lookahead=barmerge.lookahead_off)
+mtf_cvd = request.security(syminfo.tickerid, cvd_tf, f_cvd(cvd_len), lookahead=barmerge.lookahead_off)
+mtf_obv = request.security(syminfo.tickerid, obv_tf, ta.obv, lookahead=barmerge.lookahead_off)
+obv_ma = obv_ma_type == 'SMA' ? ta.sma(mtf_obv, obv_ma_len) : ta.ema(mtf_obv, obv_ma_len)
+
+// ATR for limit order trigger
+atr_value = ta.atr(limit_order_atr_len)
+
+// =================================================================================
+// === Limit Order Tracking Variables ===
+// =================================================================================
+
+var float long_entry_price = na
+var float short_entry_price = na
+var bool long_limit_order_placed = false
+var bool short_limit_order_placed = false
+
+// =================================================================================
+// === Filter Logic ===
+// =================================================================================
+
+is_in_no_trade_zone = not na(time(timeframe.period, no_trade_session))
+var session_pnl = 0.0
+var trading_allowed_by_pnl = true
+is_new_day = dayofmonth != dayofmonth[1]
+if is_new_day
+    session_pnl := strategy.netprofit
+    trading_allowed_by_pnl := true
+current_pnl = strategy.netprofit - session_pnl
+if use_max_loss and current_pnl < -max_loss_amount
+    trading_allowed_by_pnl := false
+
+strong_bullish_confirmation = mtf_conv > mtf_base and mtf_close > mtf_top and mtf_lead1 > mtf_lead2
+strong_bearish_confirmation = mtf_conv < mtf_base and mtf_close < mtf_bottom and mtf_lead1 < mtf_lead2
+is_bullish_trend = use_ichimoku_confirmation ? strong_bullish_confirmation : close > mtf_top
+is_bearish_trend = use_ichimoku_confirmation ? strong_bearish_confirmation : close < mtf_bottom
+macd_long_ok = not use_macd_filter or mtf_macd > mtf_signal
+macd_short_ok = not use_macd_filter or mtf_macd < mtf_signal
+
+cmf_long_ok = not use_cmf_filter or mtf_cmf > cmf_long_level
+cmf_short_ok = not use_cmf_filter or mtf_cmf < cmf_short_level
+obv_long_ok = not use_obv_filter or mtf_obv > obv_ma
+obv_short_ok = not use_obv_filter or mtf_obv < obv_ma
+cvd_long_ok = not use_cvd_filter or mtf_cvd > mtf_cvd[1] or mtf_cvd > 0
+cvd_short_ok = not use_cvd_filter or mtf_cvd < mtf_cvd[1] or mtf_cvd < 0
+rsi_long_ok = not use_rsi_filter or mtf_rsi > rsi_long_level and mtf_rsi > mtf_rsi[1]
+rsi_short_ok = not use_rsi_filter or mtf_rsi < rsi_short_level and mtf_rsi < mtf_rsi[1]
+
+candle_range = high - low == 0 ? 1 : high - low
+long_rejection_ok = not use_rejection_filter or (close - low) / candle_range >= rejection_candle_strength / 100
+short_rejection_ok = not use_rejection_filter or (high - close) / candle_range >= rejection_candle_strength / 100
+
+// =================================================================================
+// === Entry & Exit Logic ===
+// =================================================================================
+
+base_long_entry = ta.crossover(source, lower)
+base_short_entry = ta.crossunder(source, upper)
+bb_volatility_long_entry = percentB[1] < bb_long_level and percentB >= bb_long_level
+bb_volatility_short_entry = percentB[1] > bb_short_level and percentB <= bb_short_level
+long_trigger = use_bb_volatility_filter ? bb_volatility_long_entry : base_long_entry
+short_trigger = use_bb_volatility_filter ? bb_volatility_short_entry : base_short_entry
+
+longEntry = long_trigger and is_bullish_trend and macd_long_ok and cmf_long_ok and obv_long_ok and cvd_long_ok and rsi_long_ok and long_rejection_ok
+shortEntry = short_trigger and is_bearish_trend and macd_short_ok and cmf_short_ok and obv_short_ok and cvd_short_ok and rsi_short_ok and short_rejection_ok
+
+exitSignal = close >= mtf_bottom and close <= mtf_top
+
+// =================================================================================
+// === Limit Order Logic ===
+// =================================================================================
+
+// Calculate trigger threshold based on mode
+trigger_threshold = limit_order_trigger_mode == 'Fixed Points' ? limit_order_points : atr_value * limit_order_atr_mult
+
+// Track entry prices when positions open
+if strategy.position_size > 0 and strategy.position_size[1] == 0
+    long_entry_price := strategy.opentrades.entry_price(0)
+    long_limit_order_placed := false
+
+if strategy.position_size < 0 and strategy.position_size[1] == 0
+    short_entry_price := strategy.opentrades.entry_price(0)
+    short_limit_order_placed := false
+
+// Reset tracking when position closes
+if strategy.position_size == 0
+    long_entry_price := na
+    short_entry_price := na
+    long_limit_order_placed := false
+    short_limit_order_placed := false
+
+// Check if price has moved favorably enough to place limit order
+// For LONG positions: if price runs UP by threshold, place SELL-LIMIT at entry
+if use_limit_orders and strategy.position_size > 0 and not long_limit_order_placed and not na(long_entry_price)
+    price_run_up = high - long_entry_price
+    if price_run_up >= trigger_threshold
+        // Place sell-limit order at entry price
+        limit_qty = strategy.position_size * (limit_order_qty_percent / 100.0)
+        strategy.order('Sell-Limit@Entry', strategy.short, qty=limit_qty, limit=long_entry_price, comment='Sell-Limit at Entry')
+        long_limit_order_placed := true
+
+// For SHORT positions: if price runs DOWN by threshold, place BUY-LIMIT at entry
+if use_limit_orders and strategy.position_size < 0 and not short_limit_order_placed and not na(short_entry_price)
+    price_run_down = short_entry_price - low
+    if price_run_down >= trigger_threshold
+        // Place buy-limit order at entry price
+        limit_qty = math.abs(strategy.position_size) * (limit_order_qty_percent / 100.0)
+        strategy.order('Buy-Limit@Entry', strategy.long, qty=limit_qty, limit=short_entry_price, comment='Buy-Limit at Entry')
+        short_limit_order_placed := true
+
+// =================================================================================
+// === Strategy Execution ===
+// =================================================================================
+
+if flatten_in_no_trade_zone and is_in_no_trade_zone and strategy.position_size != 0
+    strategy.close_all(comment='Flatten: Entered No-Trade Zone')
+
+can_open_trade = barstate.isconfirmed and (use_session_filter ? not is_in_no_trade_zone : true) and trading_allowed_by_pnl and strategy.position_size == 0
+if can_open_trade
+    if longEntry
+        strategy.entry('Long', strategy.long)
+    if shortEntry
+        strategy.entry('Short', strategy.short)
+
+if strategy.position_size != 0 and use_fixed_stop
+    initial_stop_long = basis - (basis - lower) * 1.5
+    initial_stop_short = basis + (upper - basis) * 1.5
+    strategy.exit('Fixed Stop', from_entry='Long', stop=initial_stop_long)
+    strategy.exit('Fixed Stop', from_entry='Short', stop=initial_stop_short)
+
+if exitSignal and strategy.position_size != 0
+    strategy.close_all(comment='Exited: Entered Ichimoku Cloud')
+
+if not trading_allowed_by_pnl and strategy.position_size != 0
+    strategy.close_all(comment='Max Daily Loss Hit')
+
+// =================================================================================
+// === Plotting ===
+// =================================================================================
+
+plot(basis, 'BB Basis', color=color.orange)
+pU = plot(upper, 'BB Upper', color=color.blue)
+pL = plot(lower, 'BB Lower', color=color.blue)
+fill(pU, pL, color=color.new(color.blue, 90))
+
+p_mtf1 = plot(mtf_lead1, 'MTF Lead 1', color=na, offset=displacement - 1)
+p_mtf2 = plot(mtf_lead2, 'MTF Lead 2', color=na, offset=displacement - 1)
+cloud_color = mtf_lead1 > mtf_lead2 ? color.new(color.green, 85) : color.new(color.red, 85)
+fill(p_mtf1, p_mtf2, color=cloud_color, title='Ichimoku Cloud Fill')
+
+// Plot entry price lines when limit orders are active
+plot(use_limit_orders and not na(long_entry_price) and strategy.position_size > 0 ? long_entry_price : na,
+     'Long Entry Price', color=color.new(color.green, 0), style=plot.style_circles, linewidth=2)
+plot(use_limit_orders and not na(short_entry_price) and strategy.position_size < 0 ? short_entry_price : na,
+     'Short Entry Price', color=color.new(color.red, 0), style=plot.style_circles, linewidth=2)
+
+// Plot trigger threshold levels
+plot(use_limit_orders and not na(long_entry_price) and strategy.position_size > 0 and not long_limit_order_placed ?
+     long_entry_price + trigger_threshold : na,
+     'Long Trigger Level', color=color.new(color.lime, 50), style=plot.style_linebr, linewidth=1)
+plot(use_limit_orders and not na(short_entry_price) and strategy.position_size < 0 and not short_limit_order_placed ?
+     short_entry_price - trigger_threshold : na,
+     'Short Trigger Level', color=color.new(color.maroon, 50), style=plot.style_linebr, linewidth=1)
